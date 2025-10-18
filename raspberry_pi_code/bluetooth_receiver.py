@@ -79,30 +79,29 @@ class ArduinoBluetoothReceiver:
             # Parsear JSON
             arduino_data = json.loads(json_string)
             
-            # Crear datos de persona para Firebase
-            person_data = {
-                "nombre": f"Arduino_Usuario_{datetime.now().strftime('%H%M%S')}",
-                "genero": "No especificado",
-                "edad": 25,  # Valor por defecto
+            # ID específico de Geronimo en Firebase
+            geronimo_id = "Obp1lPTCnNWR9PM2XZD"
+            
+            # Datos solo de los sensores para actualizar
+            sensor_data = {
                 "accelerometer_x": arduino_data.get("accelerometer_x", 0),
                 "accelerometer_y": arduino_data.get("accelerometer_y", 0), 
                 "accelerometer_z": arduino_data.get("accelerometer_z", 0),
                 "postura_detectada": arduino_data.get("postura_detectada", "unknown"),
                 "device_id": arduino_data.get("device_id", "arduino_unknown"),
                 "arduino_timestamp": arduino_data.get("timestamp", 0),
-                "battery_level": arduino_data.get("battery_level", 0),
-                "signal_strength": arduino_data.get("signal_strength", 0)
+                "ultima_actualizacion": datetime.now().isoformat()
             }
             
-            # Enviar a Firebase
-            success, firebase_id = self.firebase_sender.send_person_data(person_data)
+            # Actualizar solo a Geronimo (no crear nueva persona)
+            success = self.firebase_sender.update_person_sensors(geronimo_id, sensor_data)
             
             if success:
-                print(f"🔥 Datos enviados a Firebase con ID: {firebase_id}")
-                print(f"📊 Postura: {person_data['postura_detectada']}")
-                print(f"📐 X:{person_data['accelerometer_x']:.3f} Y:{person_data['accelerometer_y']:.3f} Z:{person_data['accelerometer_z']:.3f}")
+                print(f"🔥 Sensores de Geronimo actualizados exitosamente!")
+                print(f"📊 Postura: {sensor_data['postura_detectada']}")
+                print(f"📐 X:{sensor_data['accelerometer_x']:.3f} Y:{sensor_data['accelerometer_y']:.3f} Z:{sensor_data['accelerometer_z']:.3f}")
             else:
-                print("❌ Error al enviar a Firebase")
+                print("❌ Error al actualizar sensores de Geronimo en Firebase")
                 
         except json.JSONDecodeError as e:
             print(f"❌ Error al parsear JSON: {e}")

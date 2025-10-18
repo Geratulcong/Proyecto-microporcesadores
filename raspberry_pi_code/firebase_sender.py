@@ -11,6 +11,32 @@ from datetime import datetime
 class FirebaseSender:
     def __init__(self, firebase_url="https://proyecto-posturas-microp-default-rtdb.firebaseio.com"):
         self.firebase_url = firebase_url
+    
+    def update_person_sensors(self, person_id, sensor_data):
+        """
+        Actualiza solo los datos de sensores de una persona existente
+        """
+        try:
+            # URL para actualizar persona específica
+            url = f"{self.firebase_url}/persons/{person_id}.json"
+            
+            # Usar PATCH para actualizar solo campos específicos
+            response = requests.patch(url, json=sensor_data, timeout=10)
+            
+            if response.status_code == 200:
+                print(f"✅ Sensores actualizados para persona ID: {person_id}")
+                return True
+            else:
+                print(f"❌ Error HTTP al actualizar: {response.status_code}")
+                print(f"Response: {response.text}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Error de conexión a Firebase: {e}")
+            return False
+        except Exception as e:
+            print(f"❌ Error inesperado en Firebase: {e}")
+            return False
         
     def send_person_data(self, person_data):
         """

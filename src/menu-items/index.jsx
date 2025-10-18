@@ -6,11 +6,12 @@ import other from './other';
 import pages from './pages';
 import tableComponents from './tables';
 import uiComponents from './ui-components';
+import postureSystem from './posture-system';
 
 // ==============================|| MENU ITEMS ||============================== //
 
 const menuItems = {
-  items: [navigation, uiComponents, formComponents, tableComponents, chartsMaps, pages, other]
+  items: [navigation, postureSystem, uiComponents, formComponents, tableComponents, chartsMaps, pages, other]
 };
 
 export default menuItems;

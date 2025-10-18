@@ -1,0 +1,284 @@
+import React, { useState, useEffect } from 'react';
+import { Card, Row, Col, Badge, Alert, Container } from 'react-bootstrap';
+import { ref, onValue } from 'firebase/database';
+import { database } from '../firebase/config';
+import MainCard from '../components/MainCard';
+
+const GeronimoMonitor = () => {
+  const [geronimoData, setGeronimoData] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('Desconectado');
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // ID específico de Geronimo
+  const GERONIMO_ID = 'Obp1lPTCnNWR9PM2XZD';
+
+  useEffect(() => {
+    // Listener en tiempo real para los datos de Geronimo
+    const geronimoRef = ref(database, `persons/${GERONIMO_ID}`);
+    
+    const unsubscribe = onValue(geronimoRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        setGeronimoData(data);
+        setLastUpdate(new Date().toLocaleTimeString());
+        setConnectionStatus('Conectado');
+        setLoading(false);
+        
+        // Auto-desconectar si no hay actualizaciones en 10 segundos
+        setTimeout(() => {
+          const now = new Date();
+          const lastUpdateTime = new Date(data.ultima_actualizacion || data.timestamp);
+          const diffSeconds = (now - lastUpdateTime) / 1000;
+          
+          if (diffSeconds > 10) {
+            setConnectionStatus('Sin datos recientes');
+          }
+        }, 10000);
+        
+      } else {
+        setLoading(false);
+        setConnectionStatus('Usuario no encontrado');
+      }
+    }, (error) => {
+      console.error('Error listening to Firebase:', error);
+      setConnectionStatus('Error de conexión');
+      setLoading(false);
+    });
+
+    // Cleanup listener al desmontar componente
+    return () => unsubscribe();
+  }, [GERONIMO_ID]);
+
+  const getPostureColor = (postura) => {
+    switch (postura) {
+      case 'erguido': return 'success';
+      case 'semi_inclinado': return 'warning';
+      case 'acostado': return 'info';
+      case 'movimiento': return 'secondary';
+      default: return 'dark';
+    }
+  };
+
+  const getPostureIcon = (postura) => {
+    switch (postura) {
+      case 'erguido': return '🚶';
+      case 'semi_inclinado': return '📐';
+      case 'acostado': return '🛏️';
+      case 'movimiento': return '🔄';
+      default: return '❓';
+    }
+  };
+
+  const formatAccelValue = (value) => {
+    return typeof value === 'number' ? value.toFixed(3) : '0.000';
+  };
+
+  if (loading) {
+    return (
+      <Container>
+        <MainCard title="Monitor de Geronimo">
+          <div className="text-center p-4">
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">Cargando...</span>
+            </div>
+            <p className="mt-2">Conectando con Firebase...</p>
+          </div>
+        </MainCard>
+      </Container>
+    );
+  }
+
+  if (!geronimoData) {
+    return (
+      <Container>
+        <MainCard title="Monitor de Geronimo">
+          <Alert variant="warning">
+            <h5>👤 Usuario no encontrado</h5>
+            <p>No se encontraron datos para Geronimo (ID: {GERONIMO_ID})</p>
+            <p>Asegúrate de que:</p>
+            <ul>
+              <li>El Arduino esté conectado y enviando datos</li>
+              <li>El Raspberry Pi esté ejecutando el receptor Bluetooth</li>
+              <li>El ID sea correcto en Firebase</li>
+            </ul>
+          </Alert>
+        </MainCard>
+      </Container>
+    );
+  }
+
+  return (
+    <Container>
+      <MainCard title={`📊 Monitor en Tiempo Real - ${geronimoData.nombre || 'Geronimo'}`}>
+        
+        {/* Estado de conexión */}
+        <Row className="mb-3">
+          <Col>
+            <div className="d-flex justify-content-between align-items-center">
+              <Badge 
+                bg={connectionStatus === 'Conectado' ? 'success' : 'danger'}
+                className="fs-6 p-2"
+              >
+                📡 {connectionStatus}
+              </Badge>
+              {lastUpdate && (
+                <small className="text-muted">
+                  Última actualización: {lastUpdate}
+                </small>
+              )}
+            </div>
+          </Col>
+        </Row>
+
+        {/* Información del usuario */}
+        <Row className="mb-4">
+          <Col md={6}>
+            <Card className="h-100">
+              <Card.Header>
+                <h6 className="mb-0">👤 Información Personal</h6>
+              </Card.Header>
+              <Card.Body>
+                <p><strong>Nombre:</strong> {geronimoData.nombre}</p>
+                <p><strong>Género:</strong> {geronimoData.genero}</p>
+                <p><strong>Edad:</strong> {geronimoData.edad} años</p>
+                <p><strong>Device ID:</strong> {geronimoData.device_id || 'N/A'}</p>
+              </Card.Body>
+            </Card>
+          </Col>
+          
+          <Col md={6}>
+            <Card className="h-100">
+              <Card.Header>
+                <h6 className="mb-0">🔄 Estado Actual</h6>
+              </Card.Header>
+              <Card.Body className="text-center">
+                <div className="mb-3">
+                  <span style={{ fontSize: '3rem' }}>
+                    {getPostureIcon(geronimoData.postura_detectada)}
+                  </span>
+                </div>
+                <Badge 
+                  bg={getPostureColor(geronimoData.postura_detectada)}
+                  className="fs-5 p-2"
+                >
+                  {geronimoData.postura_detectada || 'Desconocida'}
+                </Badge>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Datos del acelerómetro */}
+        <Row className="mb-4">
+          <Col>
+            <Card>
+              <Card.Header>
+                <h6 className="mb-0">📐 Datos del Acelerómetro</h6>
+              </Card.Header>
+              <Card.Body>
+                <Row>
+                  <Col md={4}>
+                    <div className="text-center p-3 border rounded">
+                      <h4 className="text-danger mb-0">
+                        {formatAccelValue(geronimoData.accelerometer_x)}
+                      </h4>
+                      <small className="text-muted">Eje X (g)</small>
+                      <div className="progress mt-2" style={{ height: '8px' }}>
+                        <div 
+                          className="progress-bar bg-danger" 
+                          style={{ 
+                            width: `${Math.abs(geronimoData.accelerometer_x || 0) * 50}%` 
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                  </Col>
+                  
+                  <Col md={4}>
+                    <div className="text-center p-3 border rounded">
+                      <h4 className="text-warning mb-0">
+                        {formatAccelValue(geronimoData.accelerometer_y)}
+                      </h4>
+                      <small className="text-muted">Eje Y (g)</small>
+                      <div className="progress mt-2" style={{ height: '8px' }}>
+                        <div 
+                          className="progress-bar bg-warning" 
+                          style={{ 
+                            width: `${Math.abs(geronimoData.accelerometer_y || 0) * 50}%` 
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                  </Col>
+                  
+                  <Col md={4}>
+                    <div className="text-center p-3 border rounded">
+                      <h4 className="text-success mb-0">
+                        {formatAccelValue(geronimoData.accelerometer_z)}
+                      </h4>
+                      <small className="text-muted">Eje Z (g)</small>
+                      <div className="progress mt-2" style={{ height: '8px' }}>
+                        <div 
+                          className="progress-bar bg-success" 
+                          style={{ 
+                            width: `${Math.abs(geronimoData.accelerometer_z || 0) * 50}%` 
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                  </Col>
+                </Row>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Información técnica */}
+        <Row>
+          <Col>
+            <Card>
+              <Card.Header>
+                <h6 className="mb-0">🔧 Información Técnica</h6>
+              </Card.Header>
+              <Card.Body>
+                <Row>
+                  <Col md={6}>
+                    <p><strong>Arduino Timestamp:</strong> {geronimoData.arduino_timestamp || 'N/A'}</p>
+                    <p><strong>Última Actualización:</strong> {
+                      geronimoData.ultima_actualizacion 
+                        ? new Date(geronimoData.ultima_actualizacion).toLocaleString()
+                        : 'N/A'
+                    }</p>
+                  </Col>
+                  <Col md={6}>
+                    <p><strong>Fuente:</strong> {geronimoData.source || 'Manual'}</p>
+                    <p><strong>Firebase ID:</strong> <code>{GERONIMO_ID}</code></p>
+                  </Col>
+                </Row>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Instrucciones */}
+        <Row className="mt-4">
+          <Col>
+            <Alert variant="info">
+              <h6>📱 Instrucciones:</h6>
+              <ul className="mb-0">
+                <li>Los datos se actualizan automáticamente cuando el Arduino envía información</li>
+                <li>El indicador 📡 muestra el estado de la conexión</li>
+                <li>Las barras de progreso representan la intensidad de cada eje del acelerómetro</li>
+                <li>La postura se detecta automáticamente basándose en los valores del acelerómetro</li>
+              </ul>
+            </Alert>
+          </Col>
+        </Row>
+
+      </MainCard>
+    </Container>
+  );
+};
+
+export default GeronimoMonitor;

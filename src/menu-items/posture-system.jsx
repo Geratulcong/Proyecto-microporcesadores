@@ -20,8 +20,8 @@ const postureSystem = {
       url: '/persons'
     },
     {
-      id: 'monitor-geronimo',
-      title: 'Monitor Geronimo',
+      id: 'monitor',
+      title: 'Monitor',
       type: 'item',
       icon: icons.monitor,
       url: '/monitor-geronimo'

@@ -5,26 +5,5 @@ const icons = {
 };
 
 const navigation = {
-  id: 'group-dashboard-loading-unique',
-  title: 'Navigation',
-  type: 'group',
-  icon: icons.dashboard,
-  children: [
-    {
-      id: 'dashboard',
-      title: 'Dashboard',
-      type: 'item',
-      icon: icons.dashboard,
-      url: '/'
-    },
-    {
-      id: 'monitor-geronimo',
-      title: 'Monitor Geronimo',
-      type: 'item',
-      icon: icons.monitor,
-      url: '/monitor-geronimo'
-    }
-  ]
-};
-
-export default navigation;
+// Eliminado Navigation y Dashboard, solo queda postureSystem
+export default {};

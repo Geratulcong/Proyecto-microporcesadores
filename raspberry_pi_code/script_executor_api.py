@@ -180,11 +180,40 @@ AVAILABLE_SCRIPTS = {
             }
         }
     },
+    'maestro': {
+        'name': 'Maestro BLE Dual',
+        'description': 'Conectar sensores de brazo y pie independientemente',
+        'file': 'maestro.py',
+        'icon': '�',
+        'parameters': {
+            'scan_timeout': {
+                'type': 'number',
+                'description': 'Tiempo de escaneo BLE (segundos)',
+                'default': 15,
+                'min': 5,
+                'max': 60
+            },
+            'firebase_interval': {
+                'type': 'number',
+                'description': 'Intervalo de envío a Firebase (segundos)',
+                'default': 0.3,
+                'min': 0.1,
+                'max': 0.5,
+                'step': 0.1
+            },
+            'debug': {
+                'type': 'boolean',
+                'description': 'Activar modo debug',
+                'default': False
+            }
+        }
+    },
+    # Alias para compatibilidad con frontend
     'maestro_brazo_ble': {
-        'name': 'Maestro BLE Solo Brazo',
-        'description': 'Conectar solo sensor del brazo',
-        'file': 'maestro_brazo_ble.py',
-        'icon': '🦾',
+        'name': 'Maestro BLE Dual (alias)',
+        'description': 'Conectar sensores de brazo y pie independientemente',
+        'file': 'maestro.py',
+        'icon': '🤖',
         'parameters': {
             'scan_timeout': {
                 'type': 'number',

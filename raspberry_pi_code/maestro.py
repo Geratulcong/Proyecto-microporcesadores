@@ -333,6 +333,130 @@ class BLEDualSensorMaster:
                         logger.info(f"Sensor PIE (alternativo): {device.address}")
         
         return arm_device, foot_device
+
+    async def continuous_scan_and_connect(self):
+        """Escanea continuamente hasta conectar ambos sensores"""
+        logger.info("🔄 Iniciando escaneo continuo hasta conectar ambos sensores...")
+        
+        scan_attempt = 0
+        
+        while self.running and (not self.arm_connected or not self.foot_connected):
+            scan_attempt += 1
+            logger.info(f"🔍 Intento de escaneo #{scan_attempt}")
+            
+            try:
+                # Solo escanear sensores que no están conectados
+                scan_tasks = []
+                
+                if not self.arm_connected:
+                    scan_tasks.append(asyncio.create_task(self.scan_for_arm_device()))
+                else:
+                    scan_tasks.append(asyncio.create_task(asyncio.sleep(0)))  # Placeholder
+                    
+                if not self.foot_connected:
+                    scan_tasks.append(asyncio.create_task(self.scan_for_foot_device()))
+                else:
+                    scan_tasks.append(asyncio.create_task(asyncio.sleep(0)))  # Placeholder
+                
+                # Esperar resultados de escaneo
+                results = await asyncio.gather(*scan_tasks, return_exceptions=True)
+                
+                arm_device = results[0] if not self.arm_connected and not isinstance(results[0], Exception) else None
+                foot_device = results[1] if not self.foot_connected and not isinstance(results[1], Exception) else None
+                
+                # Intentar conectar sensores encontrados
+                connection_tasks = []
+                
+                if arm_device and not self.arm_connected:
+                    logger.info("🦾 Sensor de brazo encontrado, intentando conectar...")
+                    connection_tasks.append(asyncio.create_task(self.connect_to_arm(arm_device)))
+                    
+                if foot_device and not self.foot_connected:
+                    logger.info("🦶 Sensor de pie encontrado, intentando conectar...")
+                    connection_tasks.append(asyncio.create_task(self.connect_to_foot(foot_device)))
+                
+                # Ejecutar conexiones
+                if connection_tasks:
+                    await asyncio.gather(*connection_tasks, return_exceptions=True)
+                
+                # Verificar estado de conexiones
+                connected_sensors = []
+                if self.arm_connected:
+                    connected_sensors.append("brazo")
+                if self.foot_connected:
+                    connected_sensors.append("pie")
+                
+                if connected_sensors:
+                    logger.info(f"✅ Conectado a: {', '.join(connected_sensors)}")
+                
+                # Si ambos están conectados, salir del bucle
+                if self.arm_connected and self.foot_connected:
+                    logger.info("🎉 ¡Ambos sensores conectados exitosamente!")
+                    break
+                    
+                # Si ninguno se conectó en este intento, esperar antes del siguiente
+                if not connected_sensors or (not self.arm_connected or not self.foot_connected):
+                    missing_sensors = []
+                    if not self.arm_connected:
+                        missing_sensors.append("brazo")
+                    if not self.foot_connected:
+                        missing_sensors.append("pie")
+                    
+                    logger.info(f"⏳ Esperando 3 segundos antes del siguiente escaneo...")
+                    logger.info(f"📋 Sensores pendientes: {', '.join(missing_sensors)}")
+                    await asyncio.sleep(3)
+                
+            except Exception as e:
+                logger.error(f"❌ Error en escaneo continuo: {e}")
+                await asyncio.sleep(3)
+        
+        if not self.running:
+            logger.info("⏹️ Escaneo continuo detenido por usuario")
+        elif self.arm_connected and self.foot_connected:
+            logger.info("✅ Escaneo continuo completado: ambos sensores conectados")
+
+    async def reconnect_sensors(self):
+        """Reconecta sensores desconectados de forma automática"""
+        if hasattr(self, '_reconnecting') and self._reconnecting:
+            return  # Ya hay una reconexión en progreso
+            
+        self._reconnecting = True
+        logger.info("🔄 Iniciando proceso de reconexión automática...")
+        
+        try:
+            reconnect_attempt = 0
+            
+            while self.running and (not self.arm_connected or not self.foot_connected):
+                reconnect_attempt += 1
+                logger.info(f"🔁 Intento de reconexión #{reconnect_attempt}")
+                
+                # Intentar reconectar sensores desconectados
+                if not self.arm_connected:
+                    arm_device = await self.scan_for_arm_device()
+                    if arm_device:
+                        await self.connect_to_arm(arm_device)
+                        if self.arm_connected:
+                            logger.info("✅ Brazo reconectado exitosamente")
+                
+                if not self.foot_connected:
+                    foot_device = await self.scan_for_foot_device()
+                    if foot_device:
+                        await self.connect_to_foot(foot_device)
+                        if self.foot_connected:
+                            logger.info("✅ Pie reconectado exitosamente")
+                
+                # Si ambos están conectados, terminar reconexión
+                if self.arm_connected and self.foot_connected:
+                    logger.info("🎉 Todos los sensores han sido reconectados")
+                    break
+                
+                # Esperar antes del siguiente intento
+                await asyncio.sleep(5)
+                
+        except Exception as e:
+            logger.error(f"❌ Error en reconexión automática: {e}")
+        finally:
+            self._reconnecting = False
     
     def transform_arduino_data(self, raw_data):
         """Transforma datos del formato Arduino al formato esperado por React"""
@@ -601,6 +725,11 @@ class BLEDualSensorMaster:
         logger.info(f"   📈 Datos totales recibidos: {self.data_count}")
         logger.info(f"   🔗 Brazo conectado: {'✅' if self.arm_connected else '❌'}")
         logger.info(f"   🔗 Pie conectado: {'✅' if self.foot_connected else '❌'}")
+        
+        # Mostrar estado de reconexión si está activa
+        if hasattr(self, '_reconnecting') and self._reconnecting:
+            logger.info(f"   🔄 Reconectando sensores desconectados...")
+            
         if self.active_person:
             logger.info(f"   👤 Persona activa: {self.active_person.get('nombre')} (ID: {self.active_person.get('firebase_id')})")
             arm_readings = getattr(self, 'brazo_readings_count', 0)
@@ -621,15 +750,16 @@ class BLEDualSensorMaster:
             try:
                 # Verificar conexión del brazo
                 if self.arm_client and not self.arm_client.is_connected:
-                    logger.warning("⚠️ Brazo desconectado, reintentando...")
+                    logger.warning("⚠️ Brazo desconectado, iniciando reconexión automática...")
                     self.arm_connected = False
-                    # Aquí podrías implementar lógica de reconexión automática
+                    # Iniciar escaneo continuo para reconectar sensores desconectados
+                    asyncio.create_task(self.reconnect_sensors())
                 
                 # Verificar conexión del pie
                 if self.foot_client and not self.foot_client.is_connected:
-                    logger.warning("⚠️ Pie desconectado, reintentando...")
+                    logger.warning("⚠️ Pie desconectado, iniciando reconexión automática...")
                     self.foot_connected = False
-                    # Aquí podrías implementar lógica de reconexión automática
+                    # El método reconnect_sensors manejará ambos sensores
                 
                 # Refrescar persona activa cada 30 segundos (10 ciclos x 3 segundos)
                 person_check_counter += 1
@@ -682,53 +812,29 @@ class BLEDualSensorMaster:
     async def run(self):
         """Función principal del maestro BLE dual (brazo y pie)"""
         logger.info("🚀 Iniciando Maestro BLE DUAL (BRAZO + PIE)...")
+        logger.info("� MODO: Escaneo continuo hasta conectar ambos sensores")
         
         try:
-            # 1. Escanear ambos dispositivos en paralelo
-            logger.info("🔍 Escaneando sensores de brazo y pie...")
-            scan_tasks = []
+            # 1. Iniciar escaneo continuo hasta conectar ambos sensores
+            await self.continuous_scan_and_connect()
             
-            arm_scan_task = asyncio.create_task(self.scan_for_arm_device())
-            foot_scan_task = asyncio.create_task(self.scan_for_foot_device())
-            
-            # Esperar a que terminen ambas exploraciones
-            arm_device, foot_device = await asyncio.gather(arm_scan_task, foot_scan_task, return_exceptions=True)
-            
-            # Verificar resultados de exploración
-            arm_found = arm_device and not isinstance(arm_device, Exception)
-            foot_found = foot_device and not isinstance(foot_device, Exception)
-            
-            if not arm_found and not foot_found:
-                logger.error("❌ No se encontró ningún sensor (ni brazo ni pie)")
+            # Verificar que al menos un sensor se haya conectado
+            if not self.arm_connected and not self.foot_connected:
+                logger.error("❌ No se pudo conectar a ningún sensor después del escaneo continuo")
                 return
             
-            logger.info(f"📡 Sensores encontrados: Brazo={'✅' if arm_found else '❌'} | Pie={'✅' if foot_found else '❌'}")
+            # Mostrar resumen de conexiones exitosas
+            logger.info("📊 RESUMEN DE CONEXIONES:")
+            if self.arm_connected:
+                logger.info("   ✅ Sensor del brazo: CONECTADO")
+            else:
+                logger.info("   ❌ Sensor del brazo: NO CONECTADO")
+            if self.foot_connected:
+                logger.info("   ✅ Sensor del pie: CONECTADO")
+            else:
+                logger.info("   ❌ Sensor del pie: NO CONECTADO")
             
-            # 2. Conectar dispositivos encontrados
-            connection_tasks = []
-            if arm_found:
-                connection_tasks.append(asyncio.create_task(self.connect_to_arm(arm_device)))
-            if foot_found:
-                connection_tasks.append(asyncio.create_task(self.connect_to_foot(foot_device)))
-            
-            # Esperar conexiones
-            if connection_tasks:
-                connection_results = await asyncio.gather(*connection_tasks, return_exceptions=True)
-                
-                # Verificar conexiones exitosas
-                connections_success = sum(1 for result in connection_results if result and not isinstance(result, Exception))
-                
-                if connections_success == 0:
-                    logger.error("❌ No se pudo conectar a ningún sensor")
-                    return
-                
-                logger.info(f"🎉 Conectado a {connections_success} sensor(es)")
-                if self.arm_connected:
-                    logger.info("   ✅ Sensor del brazo activo")
-                if self.foot_connected:
-                    logger.info("   ✅ Sensor del pie activo")
-            
-            # 3. Obtener persona activa del monitor (si no se configuró desde parámetros)
+            # 2. Obtener persona activa del monitor (si no se configuró desde parámetros)
             if not self.active_person:
                 self.active_person = self.get_active_person()
             

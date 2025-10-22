@@ -115,10 +115,10 @@ const GeronimoMonitor = () => {
   // Función para ejecutar script automáticamente
   const executeScriptForPerson = async (person) => {
     setScriptExecuting(true);
-    setScriptStatus('Iniciando script del brazo...');
+    setScriptStatus('Ee=jecutando');
     
     try {
-      // Ejecutar el script maestro_brazo_ble con la persona seleccionada
+      // Ejecutar el script maestro con la persona seleccionada
       const result = await ScriptExecutorService.executeBrazoScript({
         person_id: person.id,
         person_name: person.nombre,
@@ -126,10 +126,10 @@ const GeronimoMonitor = () => {
       });
       
       if (result.success) {
-        setScriptStatus('✅ Script del brazo iniciado correctamente');
+        setScriptStatus('✅ Ejecucion iniciada');
         setConnectionStatus('Conectando sensores...');
       } else {
-        setScriptStatus('❌ Error iniciando script: ' + result.error);
+        setScriptStatus('❌ Error: ' + result.error);
         setConnectionStatus('Error de conexión');
       }
     } catch (error) {
@@ -142,13 +142,27 @@ const GeronimoMonitor = () => {
 
   // Función para cambiar la persona seleccionada
   const handlePersonChange = async (person) => {
+    // Si hay un script ejecutándose, detenerlo primero
+    if (scriptExecuting) {
+      setScriptStatus('⏹️ Deteniendo script anterior...');
+      try {
+        await ScriptExecutorService.stopScript('maestro');
+        setScriptStatus('✅ Script anterior detenido');
+      } catch (error) {
+        console.error('Error deteniendo script:', error);
+        setScriptStatus('⚠️ Error deteniendo script anterior');
+      }
+      setScriptExecuting(false);
+    }
+    
     setSelectedPerson(person);
     setSensorData(null);
-    setConnectionStatus('Iniciando sensores...');
+    setConnectionStatus('Iniciando sensores automáticamente...');
     setLoading(true);
     setDataCount(0);
+    setScriptStatus(null); // Limpiar estado del script
     
-    // Ejecutar script automáticamente cuando se selecciona una persona
+    // Ejecutar script automáticamente para la nueva persona seleccionada
     if (person && person.id) {
       await executeScriptForPerson(person);
     }
@@ -200,7 +214,7 @@ const GeronimoMonitor = () => {
           
           {/* Selector de Personas */}
           <Row className="mb-4">
-            <Col md={8}>
+            <Col md={12}>
               <div className="d-flex align-items-center gap-3">
                 <strong>👥 Seleccionar Persona:</strong>
                 <Dropdown>
@@ -235,29 +249,19 @@ const GeronimoMonitor = () => {
                 </Dropdown>
               </div>
             </Col>
-            
-            <Col md={4} className="text-end">
-              <Button 
-                variant="outline-secondary" 
-                size="sm"
-                onClick={() => window.location.href = '/person'}
-              >
-                ➕ Agregar Nueva Persona
-              </Button>
-            </Col>
           </Row>
           
           <Alert variant={selectedPerson ? "warning" : "info"}>
             {selectedPerson ? (
               <>
                 <h5>📡 {connectionStatus}</h5>
-                <p>No se encontraron datos de sensores para <strong>{selectedPerson.nombre}</strong></p>
-                <p>Asegúrate de que:</p>
+                <p>Persona seleccionada: <strong>{selectedPerson.nombre}</strong></p>
+                <p>Recolección automática de datos:</p>
                 <ul>
-                  <li>El Arduino esté conectado y enviando datos</li>
-                  <li>El Raspberry Pi esté ejecutando el receptor Bluetooth</li>
-                  <li>Los datos se estén guardando en Firebase</li>
-                  <li>El nombre o ID del dispositivo coincida con el registrado</li>
+                  <li>🚀 Los sensores se iniciarán automáticamente</li>
+                  <li>🔧 Asegúrate de que el Raspberry Pi tenga acceso a los sensores Arduino</li>
+                  <li>⚡ Configura el intervalo de datos según tus necesidades</li>
+                  <li>📊 Los datos aparecerán aquí cuando el script esté funcionando</li>
                 </ul>
               </>
             ) : (
@@ -281,7 +285,7 @@ const GeronimoMonitor = () => {
         
         {/* Selector de Personas */}
         <Row className="mb-4">
-          <Col md={8}>
+          <Col md={12}>
             <div className="d-flex align-items-center gap-3">
               <strong>👥 Seleccionar Persona:</strong>
               <Dropdown>
@@ -327,22 +331,12 @@ const GeronimoMonitor = () => {
               )}
             </div>
           </Col>
-          
-          <Col md={4} className="text-end">
-            <Button 
-              variant="outline-secondary" 
-              size="sm"
-              onClick={() => window.location.href = '/person'}
-            >
-              ➕ Agregar Nueva Persona
-            </Button>
-          </Col>
         </Row>
 
-        {/* Configuración de Intervalo */}
+        {/* Configuración de Intervalo y Control Manual */}
         {selectedPerson && (
           <Row className="mb-3">
-            <Col md={6}>
+            <Col md={12}>
               <div className="d-flex align-items-center gap-3">
                 <strong>⏱️ Intervalo de datos:</strong>
                 <Form.Select 
@@ -352,11 +346,10 @@ const GeronimoMonitor = () => {
                   onChange={(e) => setFirebaseInterval(parseFloat(e.target.value))}
                 >
                   <option value={0.1}>⚡ 0.1s (100ms) - Ultra rápido</option>
-                  <option value={0.5}>🔥 0.5s (500ms) - Muy rápido</option>
-                  <option value={1.0}>💨 1.0s - Rápido</option>
-                  <option value={3.0}>📊 3.0s - Normal (recomendado)</option>
-                  <option value={5.0}>🐢 5.0s - Lento</option>
-                  <option value={10.0}>💾 10.0s - Ahorro de datos</option>
+                  <option value={0.2}>⚡ 0.2s (200ms) - Ultra rápido</option>
+                  <option value={0.3}>⚡ 0.3s (300ms) - Muy rápido</option>
+                  <option value={0.4}>� 0.4s (400ms) - Muy rápido</option>
+                  <option value={0.5}>� 0.5s (500ms) - Rápido</option>
                 </Form.Select>
                 <Badge bg="secondary" className="ms-2">
                   {firebaseInterval < 1 ? `${firebaseInterval * 1000}ms` : `${firebaseInterval}s`}
@@ -377,7 +370,7 @@ const GeronimoMonitor = () => {
                       <span className="visually-hidden">Ejecutando...</span>
                     </div>
                   )}
-                  <strong>🚀 Ejecución Automática:</strong>
+                  <strong>🚀 Estado del Script:</strong>
                   <span className="ms-2">{scriptStatus || 'Preparando script...'}</span>
                 </div>
               </Alert>
@@ -602,7 +595,7 @@ const GeronimoMonitor = () => {
                     </div>
                     <h6>📡 No hay datos de sensores</h6>
                     <p>Esperando conexión con sensores del brazo...</p>
-                    <small>Verificar que el script maestro_brazo_ble.py esté ejecutándose</small>
+                    <small>Los sensores se iniciarán automáticamente</small>
                   </div>
                 )}
               </Card.Body>
@@ -709,7 +702,7 @@ const GeronimoMonitor = () => {
                     </div>
                     <h6 className="text-warning">🦶 Sensor del Pie No Conectado</h6>
                     <p>No se detectan datos del sensor del pie</p>
-                    <small>El sistema está configurado para brazo + pie, pero solo el brazo está activo</small>
+                    <small>Los sensores se inicializarán automáticamente</small>
                     <div className="mt-2">
                       <Badge bg="warning">Esperando conexión</Badge>
                     </div>
@@ -754,9 +747,9 @@ const GeronimoMonitor = () => {
                 <h5>🔧 Pasos para conectar sensores</h5>
                 <ol>
                   <li>Asegúrate de que el Arduino del brazo esté encendido</li>
-                  <li>Ejecuta el script: <code>python maestro_brazo_ble.py</code></li>
-                  <li>Verifica que la persona <strong>{selectedPerson.nombre}</strong> esté activa</li>
-                  <li>Los datos aparecerán aquí automáticamente</li>
+                  <li>Los sensores se iniciarán automáticamente para <strong>{selectedPerson.nombre}</strong></li>
+                  <li>Verifica que el Raspberry Pi tenga conexión BLE</li>
+                  <li>Los datos aparecerán aquí cuando la conexión sea exitosa</li>
                 </ol>
               </Alert>
             </Col>

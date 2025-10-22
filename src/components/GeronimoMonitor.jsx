@@ -144,13 +144,13 @@ const GeronimoMonitor = () => {
   const handlePersonChange = async (person) => {
     // Si hay un script ejecutándose, detenerlo primero
     if (scriptExecuting) {
-      setScriptStatus('⏹️ Deteniendo script anterior...');
+      setScriptStatus('Deteniendo script anterior...');
       try {
         await ScriptExecutorService.stopScript('maestro');
-        setScriptStatus('✅ Script anterior detenido');
+        setScriptStatus('Script anterior detenido');
       } catch (error) {
         console.error('Error deteniendo script:', error);
-        setScriptStatus('⚠️ Error deteniendo script anterior');
+        setScriptStatus('Error deteniendo script anterior');
       }
       setScriptExecuting(false);
     }
@@ -180,11 +180,11 @@ const GeronimoMonitor = () => {
 
   const getPostureIcon = (postura) => {
     switch (postura) {
-      case 'erguido': return '🚶';
-      case 'semi_inclinado': return '📐';
-      case 'acostado': return '🛏️';
-      case 'movimiento': return '🔄';
-      default: return '❓';
+      case 'erguido': return '';
+      case 'semi_inclinado': return '';
+      case 'acostado': return '';
+      case 'movimiento': return '';
+      default: return '';
     }
   };
 
@@ -210,13 +210,13 @@ const GeronimoMonitor = () => {
   if (!sensorData && !loadingPersons) {
     return (
       <Container>
-        <MainCard title={`📊 Monitor - ${selectedPerson?.nombre || 'Seleccionar Persona'}`}>
+  <MainCard title={`Monitor - ${selectedPerson?.nombre || 'Seleccionar Persona'}`}>
           
           {/* Selector de Personas */}
           <Row className="mb-4">
             <Col md={12}>
               <div className="d-flex align-items-center gap-3">
-                <strong>👥 Seleccionar Persona:</strong>
+                <strong>Seleccionar Persona:</strong>
                 <Dropdown>
                   <Dropdown.Toggle variant="outline-primary" id="person-selector">
                     {selectedPerson ? (
@@ -254,19 +254,19 @@ const GeronimoMonitor = () => {
           <Alert variant={selectedPerson ? "warning" : "info"}>
             {selectedPerson ? (
               <>
-                <h5>📡 {connectionStatus}</h5>
+                <h5>{connectionStatus}</h5>
                 <p>Persona seleccionada: <strong>{selectedPerson.nombre}</strong></p>
                 <p>Recolección automática de datos:</p>
                 <ul>
-                  <li>🚀 Los sensores se iniciarán automáticamente</li>
-                  <li>🔧 Asegúrate de que el Raspberry Pi tenga acceso a los sensores Arduino</li>
-                  <li>⚡ Configura el intervalo de datos según tus necesidades</li>
-                  <li>📊 Los datos aparecerán aquí cuando el script esté funcionando</li>
+                  <li>Los sensores se iniciarán automáticamente</li>
+                  <li>Asegúrate de que el Raspberry Pi tenga acceso a los sensores Arduino</li>
+                  <li>Configura el intervalo de datos según tus necesidades</li>
+                  <li>Los datos aparecerán aquí cuando el script esté funcionando</li>
                 </ul>
               </>
             ) : (
               <>
-                <h5>👥 Selecciona una persona</h5>
+                <h5>Selecciona una persona</h5>
                 <p>Elige una persona de la lista para ver sus datos de sensores en tiempo real.</p>
                 {availablePersons.length === 0 && (
                   <p>Primero necesitas <a href="/person">registrar una persona</a> en el sistema.</p>
@@ -281,7 +281,7 @@ const GeronimoMonitor = () => {
 
   return (
     <Container>
-      <MainCard title={`📊 Monitor en Tiempo Real - ${selectedPerson?.nombre || 'Persona'}`}>
+  <MainCard title={`Monitor en Tiempo Real - ${selectedPerson?.nombre || 'Persona'}`}>
         
         {/* Selector de Personas */}
         <Row className="mb-4">
@@ -402,7 +402,7 @@ const GeronimoMonitor = () => {
           <Col md={6}>
             <Card className="h-100">
               <Card.Header>
-                <h6 className="mb-0">👤 Información Personal</h6>
+                <h6 className="mb-0">Información Personal</h6>
               </Card.Header>
               <Card.Body>
                 <p><strong>Nombre:</strong> {selectedPerson?.nombre || 'Sin seleccionar'}</p>
@@ -419,7 +419,7 @@ const GeronimoMonitor = () => {
           <Col md={6}>
             <Card className="h-100">
               <Card.Header>
-                <h6 className="mb-0">🔄 Estado Actual</h6>
+                <h6 className="mb-0">Estado Actual</h6>
               </Card.Header>
               <Card.Body className="text-center">
                 <div className="mb-3">
@@ -444,7 +444,7 @@ const GeronimoMonitor = () => {
             <Col md={12}>
               <Card>
                 <Card.Header className="bg-info text-white">
-                  <h6 className="mb-0">📊 Estadísticas de Sensores</h6>
+                  <h6 className="mb-0">Estadísticas de Sensores</h6>
                 </Card.Header>
                 <Card.Body>
                   <Row>
@@ -469,7 +469,7 @@ const GeronimoMonitor = () => {
                     <Col md={3}>
                       <div className="text-center">
                         <Badge bg={connectionStatus === 'Sensores Activos' ? 'success' : 'warning'} className="fs-6 p-2">
-                          {connectionStatus === 'Sensores Activos' ? '🟢 Activo' : '🟡 Inactivo'}
+                          {connectionStatus === 'Sensores Activos' ? 'Activo' : 'Inactivo'}
                         </Badge>
                         <small className="text-muted d-block mt-1">Estado</small>
                       </div>
@@ -491,7 +491,7 @@ const GeronimoMonitor = () => {
               <Card.Body>
                 {sensorData?.accelerometer || sensorData?.brazo?.accelerometer ? (
                   <>
-                    <h6 className="text-primary mb-3">🚀 Acelerómetro</h6>
+                    <h6 className="text-primary mb-3">Acelerómetro</h6>
                     <Row>
                       <Col md={4}>
                         <div className="text-center p-2 border rounded">
@@ -545,7 +545,7 @@ const GeronimoMonitor = () => {
                     
                     {(sensorData?.gyroscope || sensorData?.brazo?.gyroscope) && (
                       <>
-                        <h6 className="text-secondary mb-3 mt-4">🌀 Giroscopio</h6>
+                        <h6 className="text-secondary mb-3 mt-4">Giroscopio</h6>
                         <Row>
                           <Col md={4}>
                             <div className="text-center p-2 border rounded">
@@ -611,7 +611,7 @@ const GeronimoMonitor = () => {
               <Card.Body>
                 {(sensorData?.pie && sensorData?.pie?.accelerometer) || (sensorData?.sensor_type === 'combined' && sensorData?.pie) ? (
                   <>
-                    <h6 className="text-primary mb-3">🚀 Acelerómetro</h6>
+                    <h6 className="text-primary mb-3">Acelerómetro</h6>
                     <Row>
                       <Col md={4}>
                         <div className="text-center p-2 border rounded">
@@ -665,7 +665,7 @@ const GeronimoMonitor = () => {
                     
                     {sensorData?.pie?.gyroscope && (
                       <>
-                        <h6 className="text-secondary mb-3 mt-4">🌀 Giroscopio</h6>
+                        <h6 className="text-secondary mb-3 mt-4">Giroscopio</h6>
                         <Row>
                           <Col md={4}>
                             <div className="text-center p-2 border rounded">
@@ -719,7 +719,7 @@ const GeronimoMonitor = () => {
             <Col md={12}>
               <Card>
                 <Card.Header className="bg-light">
-                  <h6 className="mb-0">ℹ️ Información Adicional del Sensor</h6>
+                  <h6 className="mb-0">Información Adicional del Sensor</h6>
                 </Card.Header>
                 <Card.Body>
                   <Row>

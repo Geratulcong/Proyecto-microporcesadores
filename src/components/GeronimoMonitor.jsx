@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Badge, Alert, Container } from 'react-bootstrap';
+import { Card, Row, Col, Badge, Alert, Container, Form, Button, Dropdown } from 'react-bootstrap';
 import { ref, onValue, query, orderByKey, limitToLast } from 'firebase/database';
 import { database } from '../firebase/config';
+import { getPersons, stopListening } from '../firebase/personService';
 import MainCard from './MainCard';
 
 const GeronimoMonitor = () => {
@@ -10,52 +11,109 @@ const GeronimoMonitor = () => {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dataCount, setDataCount] = useState(0);
+  
+  // Estados para selección de personas
+  const [availablePersons, setAvailablePersons] = useState([]);
+  const [selectedPerson, setSelectedPerson] = useState(null);
+  const [loadingPersons, setLoadingPersons] = useState(true);
+
+  // Cargar personas disponibles
+  useEffect(() => {
+    const handlePersonsData = (persons) => {
+      setAvailablePersons(persons);
+      setLoadingPersons(false);
+      
+      // Seleccionar automáticamente la primera persona si no hay ninguna seleccionada
+      if (persons.length > 0 && !selectedPerson) {
+        setSelectedPerson(persons[0]);
+      }
+    };
+
+    getPersons(handlePersonsData);
+
+    // Cleanup cuando el componente se desmonta
+    return () => {
+      stopListening();
+    };
+  }, [selectedPerson]);
 
   useEffect(() => {
-    // Listener en tiempo real para los últimos datos de sensores
-    const sensorsRef = query(
-      ref(database, 'sensor_readings'),
-      orderByKey(),
-      limitToLast(1)
-    );
+    if (!selectedPerson || !selectedPerson.id) {
+      setLoading(false);
+      setConnectionStatus('Selecciona una persona');
+      setSensorData(null);
+      return;
+    }
+
+    // Listener en tiempo real para los datos de sensores de la persona específica
+    const personSensorRef = ref(database, `persons/${selectedPerson.id}/sensor_readings`);
     
-    const unsubscribe = onValue(sensorsRef, (snapshot) => {
+    const unsubscribe = onValue(personSensorRef, (snapshot) => {
       if (snapshot.exists()) {
-        const data = snapshot.val();
-        // Obtener el último registro
-        const lastKey = Object.keys(data)[0];
-        const lastData = data[lastKey];
+        const sensorReadings = snapshot.val();
         
-        setSensorData(lastData);
-        setLastUpdate(new Date().toLocaleTimeString());
-        setConnectionStatus('Conectado');
-        setLoading(false);
-        setDataCount(prev => prev + 1);
-        
-        // Auto-desconectar si no hay actualizaciones en 15 segundos
-        setTimeout(() => {
-          const now = new Date();
-          const lastUpdateTime = new Date(lastData.timestamp);
-          const diffSeconds = (now - lastUpdateTime) / 1000;
+        if (sensorReadings && Object.keys(sensorReadings).length > 0) {
+          // Obtener la lectura más reciente
+          const readingsArray = Object.values(sensorReadings);
+          const lastReading = readingsArray[readingsArray.length - 1];
           
-          if (diffSeconds > 10) {
-            setConnectionStatus('Sin datos recientes');
+          // Verificar si los datos son recientes (últimos 30 segundos)
+          const now = new Date();
+          const readingTime = new Date(lastReading.timestamp);
+          const diffSeconds = (now - readingTime) / 1000;
+          
+          if (diffSeconds <= 30) {
+            setSensorData({ 
+              ...lastReading, 
+              personInfo: selectedPerson,
+              totalReadings: readingsArray.length
+            });
+            setLastUpdate(new Date().toLocaleTimeString());
+            setConnectionStatus('Sensores Activos');
+            setDataCount(readingsArray.length);
+          } else {
+            setSensorData({ 
+              ...lastReading, 
+              personInfo: selectedPerson,
+              totalReadings: readingsArray.length
+            });
+            setLastUpdate(readingTime.toLocaleTimeString());
+            setConnectionStatus('Datos Antiguos');
+            setDataCount(readingsArray.length);
           }
-        }, 10000);
+        } else {
+          // La persona existe pero no tiene lecturas de sensores
+          setSensorData(null);
+          setConnectionStatus('Sin Sensores Conectados');
+          setDataCount(0);
+        }
+        setLoading(false);
         
       } else {
+        // No hay datos de sensores para esta persona
+        setSensorData(null);
+        setConnectionStatus('Sin Datos de Sensores');
         setLoading(false);
-        setConnectionStatus('Usuario no encontrado');
+        setDataCount(0);
       }
     }, (error) => {
-      console.error('Error listening to Firebase:', error);
-      setConnectionStatus('Error de conexión');
+      console.error('Error escuchando Firebase:', error);
+      setConnectionStatus('Error de Conexión');
       setLoading(false);
     });
 
     // Cleanup listener al desmontar componente
     return () => unsubscribe();
-  }, []);
+  }, [selectedPerson]); // Dependencia para recargar cuando cambie la persona
+
+  // Función para cambiar la persona seleccionada
+  const handlePersonChange = (person) => {
+    setSelectedPerson(person);
+    setSensorData(null);
+    setConnectionStatus('Verificando Sensores...');
+    setLoading(true);
+    setDataCount(0);
+  };
 
   const getPostureColor = (postura) => {
     switch (postura) {
@@ -96,19 +154,82 @@ const GeronimoMonitor = () => {
     );
   }
 
-  if (!sensorData) {
+  if (!sensorData && !loadingPersons) {
     return (
       <Container>
-        <MainCard title="Monitor de Geronimo">
-          <Alert variant="warning">
-            <h5>👤 Usuario no encontrado</h5>
-            <p>No se encontraron datos de sensores</p>
-            <p>Asegúrate de que:</p>
-            <ul>
-              <li>El Arduino esté conectado y enviando datos</li>
-              <li>El Raspberry Pi esté ejecutando el receptor Bluetooth</li>
-              <li>Los datos se estén guardando en Firebase</li>
-            </ul>
+        <MainCard title={`📊 Monitor - ${selectedPerson?.nombre || 'Seleccionar Persona'}`}>
+          
+          {/* Selector de Personas */}
+          <Row className="mb-4">
+            <Col md={8}>
+              <div className="d-flex align-items-center gap-3">
+                <strong>👥 Seleccionar Persona:</strong>
+                <Dropdown>
+                  <Dropdown.Toggle variant="outline-primary" id="person-selector">
+                    {selectedPerson ? (
+                      `${selectedPerson.nombre} (${selectedPerson.edad} años)`
+                    ) : (
+                      'Seleccionar persona...'
+                    )}
+                  </Dropdown.Toggle>
+
+                  <Dropdown.Menu>
+                    {availablePersons.length === 0 ? (
+                      <Dropdown.Item disabled>No hay personas registradas</Dropdown.Item>
+                    ) : (
+                      availablePersons.map((person, index) => (
+                        <Dropdown.Item
+                          key={person.id || index}
+                          onClick={() => handlePersonChange(person)}
+                          active={selectedPerson?.id === person.id}
+                        >
+                          <div>
+                            <strong>{person.nombre}</strong>
+                            <div className="small text-muted">
+                              {person.genero} • {person.edad} años
+                            </div>
+                          </div>
+                        </Dropdown.Item>
+                      ))
+                    )}
+                  </Dropdown.Menu>
+                </Dropdown>
+              </div>
+            </Col>
+            
+            <Col md={4} className="text-end">
+              <Button 
+                variant="outline-secondary" 
+                size="sm"
+                onClick={() => window.location.href = '/person'}
+              >
+                ➕ Agregar Nueva Persona
+              </Button>
+            </Col>
+          </Row>
+          
+          <Alert variant={selectedPerson ? "warning" : "info"}>
+            {selectedPerson ? (
+              <>
+                <h5>📡 {connectionStatus}</h5>
+                <p>No se encontraron datos de sensores para <strong>{selectedPerson.nombre}</strong></p>
+                <p>Asegúrate de que:</p>
+                <ul>
+                  <li>El Arduino esté conectado y enviando datos</li>
+                  <li>El Raspberry Pi esté ejecutando el receptor Bluetooth</li>
+                  <li>Los datos se estén guardando en Firebase</li>
+                  <li>El nombre o ID del dispositivo coincida con el registrado</li>
+                </ul>
+              </>
+            ) : (
+              <>
+                <h5>👥 Selecciona una persona</h5>
+                <p>Elige una persona de la lista para ver sus datos de sensores en tiempo real.</p>
+                {availablePersons.length === 0 && (
+                  <p>Primero necesitas <a href="/person">registrar una persona</a> en el sistema.</p>
+                )}
+              </>
+            )}
           </Alert>
         </MainCard>
       </Container>
@@ -117,7 +238,67 @@ const GeronimoMonitor = () => {
 
   return (
     <Container>
-      <MainCard title={`📊 Monitor en Tiempo Real - Geronimo`}>
+      <MainCard title={`📊 Monitor en Tiempo Real - ${selectedPerson?.nombre || 'Persona'}`}>
+        
+        {/* Selector de Personas */}
+        <Row className="mb-4">
+          <Col md={8}>
+            <div className="d-flex align-items-center gap-3">
+              <strong>👥 Seleccionar Persona:</strong>
+              <Dropdown>
+                <Dropdown.Toggle variant="outline-primary" id="person-selector">
+                  {selectedPerson ? (
+                    `${selectedPerson.nombre} (${selectedPerson.edad} años)`
+                  ) : (
+                    'Seleccionar persona...'
+                  )}
+                </Dropdown.Toggle>
+
+                <Dropdown.Menu>
+                  {loadingPersons ? (
+                    <Dropdown.Item disabled>Cargando personas...</Dropdown.Item>
+                  ) : availablePersons.length === 0 ? (
+                    <Dropdown.Item disabled>No hay personas registradas</Dropdown.Item>
+                  ) : (
+                    availablePersons.map((person, index) => (
+                      <Dropdown.Item
+                        key={person.id || index}
+                        onClick={() => handlePersonChange(person)}
+                        active={selectedPerson?.id === person.id}
+                      >
+                        <div>
+                          <strong>{person.nombre}</strong>
+                          <div className="small text-muted">
+                            {person.genero} • {person.edad} años
+                            {person.timestamp && (
+                              <span> • {new Date(person.timestamp).toLocaleDateString()}</span>
+                            )}
+                          </div>
+                        </div>
+                      </Dropdown.Item>
+                    ))
+                  )}
+                </Dropdown.Menu>
+              </Dropdown>
+              
+              {availablePersons.length > 0 && (
+                <Badge bg="info" className="ms-2">
+                  {availablePersons.length} persona{availablePersons.length !== 1 ? 's' : ''} disponible{availablePersons.length !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </div>
+          </Col>
+          
+          <Col md={4} className="text-end">
+            <Button 
+              variant="outline-secondary" 
+              size="sm"
+              onClick={() => window.location.href = '/person'}
+            >
+              ➕ Agregar Nueva Persona
+            </Button>
+          </Col>
+        </Row>
         
         {/* Estado de conexión */}
         <Row className="mb-3">
@@ -146,10 +327,13 @@ const GeronimoMonitor = () => {
                 <h6 className="mb-0">👤 Información Personal</h6>
               </Card.Header>
               <Card.Body>
-                <p><strong>Nombre:</strong> Geronimo</p>
-                <p><strong>Género:</strong> {sensorData.genero || 'M'}</p>
-                <p><strong>Edad:</strong> {sensorData.edad || '75'} años</p>
-                <p><strong>Device ID:</strong> {sensorData.device_id || 'N/A'}</p>
+                <p><strong>Nombre:</strong> {selectedPerson?.nombre || 'Sin seleccionar'}</p>
+                <p><strong>Género:</strong> {selectedPerson?.genero || 'N/A'}</p>
+                <p><strong>Edad:</strong> {selectedPerson?.edad || 'N/A'} años</p>
+                <p><strong>Device ID:</strong> {sensorData?.device_id || selectedPerson?.id || 'N/A'}</p>
+                {selectedPerson?.timestamp && (
+                  <p><strong>Registrado:</strong> {new Date(selectedPerson.timestamp).toLocaleString()}</p>
+                )}
               </Card.Body>
             </Card>
           </Col>
@@ -176,6 +360,49 @@ const GeronimoMonitor = () => {
           </Col>
         </Row>
 
+        {/* Estadísticas de Sensores */}
+        {sensorData && (
+          <Row className="mb-4">
+            <Col md={12}>
+              <Card>
+                <Card.Header className="bg-info text-white">
+                  <h6 className="mb-0">📊 Estadísticas de Sensores</h6>
+                </Card.Header>
+                <Card.Body>
+                  <Row>
+                    <Col md={3}>
+                      <div className="text-center">
+                        <h4 className="text-primary mb-0">{sensorData?.totalReadings || 0}</h4>
+                        <small className="text-muted">Lecturas Totales</small>
+                      </div>
+                    </Col>
+                    <Col md={3}>
+                      <div className="text-center">
+                        <h4 className="text-success mb-0">{sensorData?.sensor_type || 'N/A'}</h4>
+                        <small className="text-muted">Tipo de Sensor</small>
+                      </div>
+                    </Col>
+                    <Col md={3}>
+                      <div className="text-center">
+                        <h4 className="text-warning mb-0">{sensorData?.device_id || 'N/A'}</h4>
+                        <small className="text-muted">ID del Dispositivo</small>
+                      </div>
+                    </Col>
+                    <Col md={3}>
+                      <div className="text-center">
+                        <Badge bg={connectionStatus === 'Sensores Activos' ? 'success' : 'warning'} className="fs-6 p-2">
+                          {connectionStatus === 'Sensores Activos' ? '🟢 Activo' : '🟡 Inactivo'}
+                        </Badge>
+                        <small className="text-muted d-block mt-1">Estado</small>
+                      </div>
+                    </Col>
+                  </Row>
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
+        )}
+
         {/* Datos del Sensor del Brazo */}
         <Row className="mb-4">
           <Col md={6}>
@@ -184,65 +411,113 @@ const GeronimoMonitor = () => {
                 <h6 className="mb-0">� Sensor del Brazo</h6>
               </Card.Header>
               <Card.Body>
-                {sensorData?.brazo ? (
-                  <Row>
-                    <Col md={4}>
-                      <div className="text-center p-2 border rounded">
-                        <h5 className="text-danger mb-0">
-                          {formatAccelValue(sensorData.brazo.acc?.x)}
-                        </h5>
-                        <small className="text-muted">X (g)</small>
-                        <div className="progress mt-1" style={{ height: '6px' }}>
-                          <div 
-                            className="progress-bar bg-danger" 
-                            style={{ 
-                              width: `${Math.abs(sensorData.brazo.acc?.x || 0) * 50}%` 
-                            }}
-                          ></div>
+                {sensorData?.accelerometer || sensorData?.brazo?.accelerometer ? (
+                  <>
+                    <h6 className="text-primary mb-3">🚀 Acelerómetro</h6>
+                    <Row>
+                      <Col md={4}>
+                        <div className="text-center p-2 border rounded">
+                          <h5 className="text-danger mb-0">
+                            {formatAccelValue(sensorData?.accelerometer?.x || sensorData?.brazo?.accelerometer?.x)}
+                          </h5>
+                          <small className="text-muted">X (g)</small>
+                          <div className="progress mt-1" style={{ height: '6px' }}>
+                            <div 
+                              className="progress-bar bg-danger" 
+                              style={{ 
+                                width: `${Math.min(Math.abs((sensorData?.accelerometer?.x || sensorData?.brazo?.accelerometer?.x) || 0) * 10, 100)}%` 
+                              }}
+                            ></div>
+                          </div>
                         </div>
-                      </div>
-                    </Col>
-                    <Col md={4}>
-                      <div className="text-center p-2 border rounded">
-                        <h5 className="text-warning mb-0">
-                          {formatAccelValue(sensorData.brazo.acc?.y)}
-                        </h5>
-                        <small className="text-muted">Y (g)</small>
-                        <div className="progress mt-1" style={{ height: '6px' }}>
-                          <div 
-                            className="progress-bar bg-warning" 
-                            style={{ 
-                              width: `${Math.abs(sensorData.brazo.acc?.y || 0) * 50}%` 
-                            }}
-                          ></div>
+                      </Col>
+                      <Col md={4}>
+                        <div className="text-center p-2 border rounded">
+                          <h5 className="text-warning mb-0">
+                            {formatAccelValue(sensorData?.accelerometer?.y || sensorData?.brazo?.accelerometer?.y)}
+                          </h5>
+                          <small className="text-muted">Y (g)</small>
+                          <div className="progress mt-1" style={{ height: '6px' }}>
+                            <div 
+                              className="progress-bar bg-warning" 
+                              style={{ 
+                                width: `${Math.min(Math.abs((sensorData?.accelerometer?.y || sensorData?.brazo?.accelerometer?.y) || 0) * 10, 100)}%` 
+                              }}
+                            ></div>
+                          </div>
                         </div>
-                      </div>
-                    </Col>
-                    <Col md={4}>
-                      <div className="text-center p-2 border rounded">
-                        <h5 className="text-success mb-0">
-                          {formatAccelValue(sensorData.brazo.acc?.z)}
-                        </h5>
-                        <small className="text-muted">Z (g)</small>
-                        <div className="progress mt-1" style={{ height: '6px' }}>
-                          <div 
-                            className="progress-bar bg-success" 
-                            style={{ 
-                              width: `${Math.abs(sensorData.brazo.acc?.z || 0) * 50}%` 
-                            }}
-                          ></div>
+                      </Col>
+                      <Col md={4}>
+                        <div className="text-center p-2 border rounded">
+                          <h5 className="text-success mb-0">
+                            {formatAccelValue(sensorData?.accelerometer?.z || sensorData?.brazo?.accelerometer?.z)}
+                          </h5>
+                          <small className="text-muted">Z (g)</small>
+                          <div className="progress mt-1" style={{ height: '6px' }}>
+                            <div 
+                              className="progress-bar bg-success" 
+                              style={{ 
+                                width: `${Math.min(Math.abs((sensorData?.accelerometer?.z || sensorData?.brazo?.accelerometer?.z) || 0) * 10, 100)}%` 
+                              }}
+                            ></div>
+                          </div>
                         </div>
-                      </div>
-                    </Col>
-                    <Col md={12} className="mt-2">
-                      <small className="text-muted">
-                        <strong>Timestamp:</strong> {sensorData.brazo.ts || 'N/A'}
-                      </small>
-                    </Col>
-                  </Row>
+                      </Col>
+                    </Row>
+                    
+                    {(sensorData?.gyroscope || sensorData?.brazo?.gyroscope) && (
+                      <>
+                        <h6 className="text-secondary mb-3 mt-4">🌀 Giroscopio</h6>
+                        <Row>
+                          <Col md={4}>
+                            <div className="text-center p-2 border rounded">
+                              <h5 className="text-info mb-0">
+                                {formatAccelValue(sensorData?.gyroscope?.x || sensorData?.brazo?.gyroscope?.x)}
+                              </h5>
+                              <small className="text-muted">X (°/s)</small>
+                            </div>
+                          </Col>
+                          <Col md={4}>
+                            <div className="text-center p-2 border rounded">
+                              <h5 className="text-info mb-0">
+                                {formatAccelValue(sensorData?.gyroscope?.y || sensorData?.brazo?.gyroscope?.y)}
+                              </h5>
+                              <small className="text-muted">Y (°/s)</small>
+                            </div>
+                          </Col>
+                          <Col md={4}>
+                            <div className="text-center p-2 border rounded">
+                              <h5 className="text-info mb-0">
+                                {formatAccelValue(sensorData?.gyroscope?.z || sensorData?.brazo?.gyroscope?.z)}
+                              </h5>
+                              <small className="text-muted">Z (°/s)</small>
+                            </div>
+                          </Col>
+                        </Row>
+                      </>
+                    )}
+                    
+                    <Row className="mt-3">
+                      <Col md={12}>
+                        <div className="d-flex justify-content-between">
+                          <small className="text-muted">
+                            <strong>Timestamp:</strong> {sensorData?.timestamp ? new Date(sensorData.timestamp).toLocaleString() : 'N/A'}
+                          </small>
+                          <Badge bg="success" className="ms-2">
+                            {sensorData?.totalReadings || 0} lecturas
+                          </Badge>
+                        </div>
+                      </Col>
+                    </Row>
+                  </>
                 ) : (
-                  <div className="text-center text-muted">
-                    <p>📡 Esperando datos del sensor del brazo...</p>
+                  <div className="text-center text-muted p-4">
+                    <div className="mb-3">
+                      <i className="fas fa-satellite-dish fa-3x text-muted"></i>
+                    </div>
+                    <h6>📡 No hay datos de sensores</h6>
+                    <p>Esperando conexión con sensores del brazo...</p>
+                    <small>Verificar que el script maestro_brazo_ble.py esté ejecutándose</small>
                   </div>
                 )}
               </Card.Body>
@@ -256,7 +531,152 @@ const GeronimoMonitor = () => {
                 <h6 className="mb-0">🦶 Sensor del Pie</h6>
               </Card.Header>
               <Card.Body>
-                {sensorData?.pie ? (
+                {sensorData?.pie || sensorData?.sensor_type === 'combined' ? (
+                  <>
+                    <h6 className="text-primary mb-3">🚀 Acelerómetro</h6>
+                    <Row>
+                      <Col md={4}>
+                        <div className="text-center p-2 border rounded">
+                          <h5 className="text-danger mb-0">
+                            {formatAccelValue(sensorData?.pie?.accelerometer?.x || 0)}
+                          </h5>
+                          <small className="text-muted">X (g)</small>
+                          <div className="progress mt-1" style={{ height: '6px' }}>
+                            <div 
+                              className="progress-bar bg-danger" 
+                              style={{ 
+                                width: `${Math.min(Math.abs(sensorData?.pie?.accelerometer?.x || 0) * 10, 100)}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </Col>
+                      <Col md={4}>
+                        <div className="text-center p-2 border rounded">
+                          <h5 className="text-warning mb-0">
+                            {formatAccelValue(sensorData?.pie?.accelerometer?.y || 0)}
+                          </h5>
+                          <small className="text-muted">Y (g)</small>
+                          <div className="progress mt-1" style={{ height: '6px' }}>
+                            <div 
+                              className="progress-bar bg-warning" 
+                              style={{ 
+                                width: `${Math.min(Math.abs(sensorData?.pie?.accelerometer?.y || 0) * 10, 100)}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </Col>
+                      <Col md={4}>
+                        <div className="text-center p-2 border rounded">
+                          <h5 className="text-success mb-0">
+                            {formatAccelValue(sensorData?.pie?.accelerometer?.z || 0)}
+                          </h5>
+                          <small className="text-muted">Z (g)</small>
+                          <div className="progress mt-1" style={{ height: '6px' }}>
+                            <div 
+                              className="progress-bar bg-success" 
+                              style={{ 
+                                width: `${Math.min(Math.abs(sensorData?.pie?.accelerometer?.z || 0) * 10, 100)}%` 
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </Col>
+                    </Row>
+                    
+                    {sensorData?.pie?.gyroscope && (
+                      <>
+                        <h6 className="text-secondary mb-3 mt-4">🌀 Giroscopio</h6>
+                        <Row>
+                          <Col md={4}>
+                            <div className="text-center p-2 border rounded">
+                              <h5 className="text-info mb-0">
+                                {formatAccelValue(sensorData?.pie?.gyroscope?.x || 0)}
+                              </h5>
+                              <small className="text-muted">X (°/s)</small>
+                            </div>
+                          </Col>
+                          <Col md={4}>
+                            <div className="text-center p-2 border rounded">
+                              <h5 className="text-info mb-0">
+                                {formatAccelValue(sensorData?.pie?.gyroscope?.y || 0)}
+                              </h5>
+                              <small className="text-muted">Y (°/s)</small>
+                            </div>
+                          </Col>
+                          <Col md={4}>
+                            <div className="text-center p-2 border rounded">
+                              <h5 className="text-info mb-0">
+                                {formatAccelValue(sensorData?.pie?.gyroscope?.z || 0)}
+                              </h5>
+                              <small className="text-muted">Z (°/s)</small>
+                            </div>
+                          </Col>
+                        </Row>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center text-muted p-4">
+                    <div className="mb-3">
+                      <i className="fas fa-exclamation-triangle fa-3x text-warning"></i>
+                    </div>
+                    <h6 className="text-warning">🦶 Sensor del Pie No Conectado</h6>
+                    <p>No se detectan datos del sensor del pie</p>
+                    <small>El sistema está configurado para brazo + pie, pero solo el brazo está activo</small>
+                    <div className="mt-2">
+                      <Badge bg="warning">Esperando conexión</Badge>
+                    </div>
+                  </div>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Información Adicional */}
+        {sensorData && (
+          <Row className="mb-4">
+            <Col md={12}>
+              <Card>
+                <Card.Header className="bg-light">
+                  <h6 className="mb-0">ℹ️ Información Adicional del Sensor</h6>
+                </Card.Header>
+                <Card.Body>
+                  <Row>
+                    <Col md={4}>
+                      <p><strong>Arduino Timestamp:</strong> {sensorData?.arduino_timestamp || 'N/A'}</p>
+                    </Col>
+                    <Col md={4}>
+                      <p><strong>Raspberry Timestamp:</strong> {sensorData?.raspberry_timestamp || 'N/A'}</p>
+                    </Col>
+                    <Col md={4}>
+                      <p><strong>Session ID:</strong> {sensorData?.session_id || 'N/A'}</p>
+                    </Col>
+                  </Row>
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
+        )}
+
+        {/* Instrucciones cuando no hay datos */}
+        {!sensorData && selectedPerson && (
+          <Row>
+            <Col md={12}>
+              <Alert variant="info">
+                <h5>🔧 Pasos para conectar sensores</h5>
+                <ol>
+                  <li>Asegúrate de que el Arduino del brazo esté encendido</li>
+                  <li>Ejecuta el script: <code>python maestro_brazo_ble.py</code></li>
+                  <li>Verifica que la persona <strong>{selectedPerson.nombre}</strong> esté activa</li>
+                  <li>Los datos aparecerán aquí automáticamente</li>
+                </ol>
+              </Alert>
+            </Col>
+          </Row>
+        )}
                   <Row>
                     <Col md={4}>
                       <div className="text-center p-2 border rounded">
@@ -297,89 +717,6 @@ const GeronimoMonitor = () => {
                         </h5>
                         <small className="text-muted">Z (g)</small>
                         <div className="progress mt-1" style={{ height: '6px' }}>
-                          <div 
-                            className="progress-bar bg-success" 
-                            style={{ 
-                              width: `${Math.abs(sensorData.pie.acc?.z || 0) * 50}%` 
-                            }}
-                          ></div>
-                        </div>
-                      </div>
-                    </Col>
-                    <Col md={12} className="mt-2">
-                      <small className="text-muted">
-                        <strong>Timestamp:</strong> {sensorData.pie.ts || 'N/A'}
-                      </small>
-                    </Col>
-                  </Row>
-                ) : (
-                  <div className="text-center text-muted">
-                    <p>📡 Esperando datos del sensor del pie...</p>
-                  </div>
-                )}
-              </Card.Body>
-            </Card>
-          </Col>
-        </Row>
-
-        {/* Información técnica */}
-        <Row className="mb-4">
-          <Col md={6}>
-            <Card>
-              <Card.Header>
-                <h6 className="mb-0">🔧 Estado de Conexión</h6>
-              </Card.Header>
-              <Card.Body>
-                <div className="mb-2">
-                  <Badge bg={sensorData?.brazo ? 'success' : 'secondary'} className="me-2">
-                    💪 Brazo: {sensorData?.brazo ? 'Conectado' : 'Desconectado'}
-                  </Badge>
-                </div>
-                <div className="mb-2">
-                  <Badge bg={sensorData?.pie ? 'success' : 'secondary'} className="me-2">
-                    🦶 Pie: {sensorData?.pie ? 'Conectado' : 'Desconectado'}
-                  </Badge>
-                </div>
-                <p><strong>Datos recibidos:</strong> {dataCount} veces</p>
-                <p><strong>Última actualización:</strong> {lastUpdate || 'N/A'}</p>
-              </Card.Body>
-            </Card>
-          </Col>
-          <Col md={6}>
-            <Card>
-              <Card.Header>
-                <h6 className="mb-0">📊 Información del Sistema</h6>
-              </Card.Header>
-              <Card.Body>
-                <p><strong>Timestamp Sistema:</strong> {
-                  sensorData?.timestamp 
-                    ? new Date(sensorData.timestamp).toLocaleString()
-                    : 'N/A'
-                }</p>
-                <p><strong>Protocolo:</strong> Bluetooth Low Energy (BLE)</p>
-                <p><strong>Sensores:</strong> Arduino Nano 33 BLE Sense</p>
-                <p><strong>Base de datos:</strong> Firebase Realtime Database</p>
-              </Card.Body>
-            </Card>
-          </Col>
-        </Row>
-
-        {/* Instrucciones */}
-        <Row className="mt-4">
-          <Col>
-            <Alert variant="info">
-              <h6>📱 Información del Monitor:</h6>
-              <ul className="mb-0">
-                <li><strong>💪 Sensor del Brazo:</strong> Muestra datos del acelerómetro del Arduino en el brazo</li>
-                <li><strong>🦶 Sensor del Pie:</strong> Muestra datos del acelerómetro del Arduino en el pie</li>
-                <li><strong>📊 Barras de Progreso:</strong> Representan la intensidad de movimiento en cada eje (X, Y, Z)</li>
-                <li><strong>🔄 Actualización Automática:</strong> Los datos se actualizan en tiempo real vía BLE</li>
-                <li><strong>📡 Estados de Conexión:</strong> Verde = Conectado, Gris = Desconectado</li>
-              </ul>
-            </Alert>
-          </Col>
-        </Row>
-
       </MainCard>
     </Container>
   );

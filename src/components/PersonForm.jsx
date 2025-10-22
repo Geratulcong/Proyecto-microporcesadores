@@ -7,10 +7,7 @@ const PersonForm = () => {
   const [formData, setFormData] = useState({
     nombre: '',
     genero: '',
-    edad: '',
-    accelerometer_x: '',
-    accelerometer_y: '',
-    accelerometer_z: ''
+    edad: ''
   });
   
   const [loading, setLoading] = useState(false);
@@ -33,9 +30,7 @@ const PersonForm = () => {
       nombre: formData.nombre.trim(),
       genero: formData.genero,
       edad: parseInt(formData.edad),
-      accelerometer_x: parseFloat(formData.accelerometer_x),
-      accelerometer_y: parseFloat(formData.accelerometer_y),
-      accelerometer_z: parseFloat(formData.accelerometer_z)
+      es_activa: false  // Por defecto no activa, se puede activar desde el monitor
     };
 
     try {
@@ -52,10 +47,7 @@ const PersonForm = () => {
         setFormData({
           nombre: '',
           genero: '',
-          edad: '',
-          accelerometer_x: '',
-          accelerometer_y: '',
-          accelerometer_z: ''
+          edad: ''
         });
       } else {
         setAlert({
@@ -143,66 +135,6 @@ const PersonForm = () => {
 
         <Row>
           <Col md={12}>
-            <h5 className="mb-3">Datos del Acelerómetro</h5>
-          </Col>
-          
-          <Col md={4}>
-            <Form.Group className="mb-3">
-              <Form.Label>Acelerómetro X *</Form.Label>
-              <Form.Control
-                type="number"
-                step="0.001"
-                name="accelerometer_x"
-                value={formData.accelerometer_x}
-                onChange={handleChange}
-                placeholder="0.000"
-                required
-              />
-              <Form.Text className="text-muted">
-                Valor en el eje X (-10.0 a 10.0)
-              </Form.Text>
-            </Form.Group>
-          </Col>
-          
-          <Col md={4}>
-            <Form.Group className="mb-3">
-              <Form.Label>Acelerómetro Y *</Form.Label>
-              <Form.Control
-                type="number"
-                step="0.001"
-                name="accelerometer_y"
-                value={formData.accelerometer_y}
-                onChange={handleChange}
-                placeholder="0.000"
-                required
-              />
-              <Form.Text className="text-muted">
-                Valor en el eje Y (-10.0 a 10.0)
-              </Form.Text>
-            </Form.Group>
-          </Col>
-          
-          <Col md={4}>
-            <Form.Group className="mb-3">
-              <Form.Label>Acelerómetro Z *</Form.Label>
-              <Form.Control
-                type="number"
-                step="0.001"
-                name="accelerometer_z"
-                value={formData.accelerometer_z}
-                onChange={handleChange}
-                placeholder="0.000"
-                required
-              />
-              <Form.Text className="text-muted">
-                Valor en el eje Z (-10.0 a 10.0)
-              </Form.Text>
-            </Form.Group>
-          </Col>
-        </Row>
-
-        <Row>
-          <Col md={12}>
             <Button 
               variant="primary" 
               type="submit" 
@@ -218,10 +150,7 @@ const PersonForm = () => {
               onClick={() => setFormData({
                 nombre: '',
                 genero: '',
-                edad: '',
-                accelerometer_x: '',
-                accelerometer_y: '',
-                accelerometer_z: ''
+                edad: ''
               })}
             >
               Limpiar

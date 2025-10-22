@@ -31,36 +31,53 @@ class FirebaseManager:
     def __init__(self, firebase_url):
         self.firebase_url = firebase_url
         
-    def send_arm_sensor_data(self, arm_data):
-        """Envía datos del sensor del brazo a Firebase"""
+    def add_sensor_reading_to_person(self, person_firebase_id, arm_data):
+        """Agrega una nueva lectura del sensor al historial de la persona"""
         try:
-            # Preparar datos para Firebase
-            firebase_data = {
-                'timestamp': arm_data.get('timestamp'),
-                'raspberry_id': 'raspberry_pi_brazo_001',
-                'brazo': arm_data.get('brazo', {}),
-                'session_id': f"session_brazo_{int(time.time())}"
-            }
-            
-            # URL para enviar datos de sensores del brazo
-            url = f"{self.firebase_url}/sensor_brazo_readings.json"
-            
-            # Enviar datos
-            response = requests.post(url, json=firebase_data, timeout=10)
-            
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"✅ Datos del brazo enviados a Firebase. ID: {result['name']}")
-                return True, result['name']
-            else:
-                logger.error(f"❌ Error Firebase: {response.status_code} - {response.text}")
+            if not person_firebase_id:
+                logger.error("❌ No se puede agregar: person_firebase_id es None")
                 return False, None
                 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Error de conexión Firebase: {e}")
-            return False, None
+            # Crear registro de lectura del sensor
+            sensor_reading = {
+                'timestamp': datetime.now().isoformat(),
+                'raspberry_timestamp': arm_data.get('timestamp'),
+                'arduino_timestamp': arm_data.get('brazo', {}).get('arduino_timestamp', 0),
+                'device_id': arm_data.get('brazo', {}).get('device_id', 'brazo_sensor'),
+                'sensor_type': 'brazo',
+                'accelerometer': {
+                    'x': arm_data.get('brazo', {}).get('accelerometer_x', 0),
+                    'y': arm_data.get('brazo', {}).get('accelerometer_y', 0),
+                    'z': arm_data.get('brazo', {}).get('accelerometer_z', 0)
+                },
+                'gyroscope': {
+                    'x': arm_data.get('brazo', {}).get('gyroscope_x', 0),
+                    'y': arm_data.get('brazo', {}).get('gyroscope_y', 0),
+                    'z': arm_data.get('brazo', {}).get('gyroscope_z', 0)
+                }
+            }
+            
+            # URL para agregar al array de lecturas de sensor
+            url = f"{self.firebase_url}/persons/{person_firebase_id}/sensor_readings.json"
+            
+            logger.info(f"➕ Agregando lectura del sensor en: {url}")
+            
+            # POST agrega un nuevo elemento al array
+            response = requests.post(url, json=sensor_reading, timeout=10)
+            
+            if response.status_code == 200:
+                # Actualizar timestamp de última actividad
+                last_activity_url = f"{self.firebase_url}/persons/{person_firebase_id}/last_sensor_update.json"
+                requests.put(last_activity_url, json=datetime.now().isoformat(), timeout=5)
+                
+                logger.info(f"✅ Nueva lectura agregada al historial de: {person_firebase_id}")
+                return True, person_firebase_id
+            else:
+                logger.error(f"❌ Error HTTP {response.status_code}: {response.text}")
+                return False, None
+                
         except Exception as e:
-            logger.error(f"❌ Error inesperado Firebase: {e}")
+            logger.error(f"❌ Error agregando lectura: {e}")
             return False, None
     
     def send_person_data(self, person_info):
@@ -119,6 +136,10 @@ class BLEArmSensorMaster:
         # Control de envío a Firebase
         self.last_firebase_send = 0
         self.data_count = 0
+        self.arm_readings_count = 0  # Contador de lecturas guardadas
+        
+        # Persona activa del monitor
+        self.active_person = None
         
     async def scan_for_arm_device(self, timeout=None):
         """Escanea dispositivos BLE para encontrar el Arduino del brazo"""
@@ -248,8 +269,21 @@ class BLEArmSensorMaster:
                 "brazo": self.arm_data
             }
             
+            # Agregar información de la persona activa si está disponible
+            if self.active_person:
+                arm_reading.update({
+                    "nombre": self.active_person.get('nombre'),
+                    "persona_id": self.active_person.get('id'),
+                    "edad": self.active_person.get('edad'),
+                    "genero": self.active_person.get('genero')
+                })
+            
             self.data_count += 1
-            logger.info(f"🎯 Datos Brazo #{self.data_count}: {arm_reading}")
+            
+            if self.active_person:
+                logger.info(f"🎯 Datos Brazo #{self.data_count} para {self.active_person.get('nombre')}")
+            else:
+                logger.info(f"🎯 Datos Brazo #{self.data_count} (sin persona asignada)")
             
             # Enviar a Firebase según intervalo
             current_time = time.time()
@@ -258,14 +292,27 @@ class BLEArmSensorMaster:
                 self.last_firebase_send = current_time
     
     def send_to_firebase(self, arm_reading):
-        """Envía los datos del brazo a Firebase en un hilo separado"""
+        """Actualiza los datos del sensor del brazo en la persona activa"""
         def firebase_sender():
             try:
-                success, firebase_id = self.firebase.send_arm_sensor_data(arm_reading)
-                if success:
-                    logger.info(f"🔥 Firebase: Datos del brazo enviados exitosamente (ID: {firebase_id})")
+                if self.active_person and self.active_person.get('firebase_id'):
+                    # Agregar nueva lectura del sensor al historial de la persona
+                    success, person_id = self.firebase.add_sensor_reading_to_person(
+                        self.active_person.get('firebase_id'), 
+                        arm_reading
+                    )
+                    if success:
+                        logger.info(f"� Firebase: Nueva lectura del brazo agregada a {self.active_person.get('nombre')}")
+                        # Incrementar contador de lecturas
+                        if hasattr(self, 'arm_readings_count'):
+                            self.arm_readings_count += 1
+                        else:
+                            self.arm_readings_count = 1
+                    else:
+                        logger.warning(f"⚠️ Firebase: Error agregando lectura del brazo para {self.active_person.get('nombre')}")
                 else:
-                    logger.warning("⚠️ Firebase: Error enviando datos del brazo")
+                    logger.warning("⚠️ No hay persona activa seleccionada. Datos no guardados.")
+                    logger.info("💡 Selecciona una persona en el monitor web para guardar los datos del sensor")
             except Exception as e:
                 logger.error(f"❌ Firebase: Error inesperado - {e}")
         
@@ -273,48 +320,104 @@ class BLEArmSensorMaster:
         firebase_thread = threading.Thread(target=firebase_sender, daemon=True)
         firebase_thread.start()
     
-    def register_person(self, person_info):
-        """Registra información de una persona en Firebase"""
-        def person_sender():
-            try:
-                success, person_id = self.firebase.send_person_data(person_info)
-                if success:
-                    logger.info(f"👤 Firebase: Persona registrada (ID: {person_id})")
-                else:
-                    logger.warning("⚠️ Firebase: Error registrando persona")
-            except Exception as e:
-                logger.error(f"❌ Firebase: Error registrando persona - {e}")
-        
-        firebase_thread = threading.Thread(target=person_sender, daemon=True)
-        firebase_thread.start()
-    
-    def register_initial_person(self):
-        """Registra información inicial de la persona (ejemplo)"""
-        person_info = {
-            "nombre": "Usuario Sensor Brazo",
-            "genero": "No especificado",
-            "edad": 25,
-            "session_start": datetime.now().isoformat(),
-            "device_brazo": "Arduino_Brazo_Sensor",
-            "device_pie": "N/A - Solo brazo",
-            "status": "sesion_activa_brazo_solo",
-            "sensor_mode": "brazo_unicamente"
-        }
-        
-        logger.info("👤 Registrando persona (solo brazo) en Firebase...")
-        self.register_person(person_info)
+    def get_active_person(self):
+        """Obtiene la persona activa desde Firebase con su ID"""
+        try:
+            # Intentar obtener la última persona seleccionada desde el monitor
+            url = f"{self.firebase.firebase_url}/persons.json"
+            response = requests.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                persons_data = response.json()
+                if persons_data:
+                    # Obtener todas las personas con sus IDs
+                    persons_with_ids = []
+                    for firebase_id, person_data in persons_data.items():
+                        person_data['firebase_id'] = firebase_id  # Agregar el ID de Firebase
+                        persons_with_ids.append(person_data)
+                    
+                    # Ordenar por timestamp para obtener la más reciente
+                    persons_with_ids.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                    
+                    if persons_with_ids:
+                        active_person = persons_with_ids[0]  # La más reciente
+                        logger.info(f"👤 Persona activa encontrada: {active_person.get('nombre', 'Sin nombre')} (ID: {active_person.get('firebase_id')})")
+                        return active_person
+                    
+            logger.warning("⚠️ No se encontró ninguna persona registrada")
+            return None
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Error obteniendo persona activa: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error inesperado obteniendo persona: {e}")
+            return None
+
+    def get_person_readings_count(self, person_firebase_id):
+        """Obtiene el número de lecturas guardadas para una persona"""
+        try:
+            url = f"{self.firebase.firebase_url}/persons/{person_firebase_id}/sensor_readings.json"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                readings = response.json()
+                if readings:
+                    return len(readings)
+            return 0
+        except:
+            return 0
+
+    def update_person_session(self, person_data):
+        """Actualiza la sesión de la persona activa con información del brazo"""
+        if not person_data or not person_data.get('firebase_id'):
+            return
+            
+        try:
+            # Solo los campos de sesión que queremos actualizar
+            session_update = {
+                'brazo_session_start': datetime.now().isoformat(),
+                'device_brazo_connected': True,
+                'raspberry_brazo_id': 'raspberry_pi_brazo_001',
+                'last_brazo_connection': datetime.now().isoformat(),
+                'sensor_mode': 'brazo_activo'
+            }
+            
+            logger.info(f"📝 Actualizando sesión del brazo para: {person_data.get('nombre', 'Usuario')}")
+            
+            # URL para actualizar la persona existente específica
+            url = f"{self.firebase.firebase_url}/persons/{person_data.get('firebase_id')}.json"
+            
+            # Usar PATCH para solo actualizar los campos de sesión
+            response = requests.patch(url, json=session_update, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("✅ Sesión del brazo actualizada exitosamente")
+            else:
+                logger.warning(f"⚠️ Error actualizando sesión del brazo: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error actualizando sesión: {e}")
     
     def show_statistics(self):
         """Muestra estadísticas del sistema"""
         logger.info("📊 ESTADÍSTICAS DEL SISTEMA (SOLO BRAZO)")
         logger.info(f"   📈 Datos recibidos: {self.data_count}")
         logger.info(f"   🔗 Brazo conectado: {'✅' if self.arm_connected else '❌'}")
+        if self.active_person:
+            logger.info(f"   👤 Persona activa: {self.active_person.get('nombre')} (ID: {self.active_person.get('firebase_id')})")
+            readings_count = getattr(self, 'arm_readings_count', 0)
+            logger.info(f"   📊 Lecturas guardadas: {readings_count}")
+        else:
+            logger.info(f"   👤 Persona activa: Sin seleccionar")
         logger.info(f"   🔥 Último envío Firebase: {int(time.time() - self.last_firebase_send)}s atrás")
         logger.info(f"   ⏱️  Intervalo Firebase: {self.firebase_interval}s")
         logger.info("─" * 50)
     
     async def monitor_connection(self):
         """Monitor para reconectar el dispositivo del brazo si se desconecta"""
+        person_check_counter = 0
+        
         while self.running:
             try:
                 # Verificar conexión del brazo
@@ -322,6 +425,27 @@ class BLEArmSensorMaster:
                     logger.warning("⚠️ Brazo desconectado, reintentando...")
                     self.arm_connected = False
                     # Aquí podrías implementar lógica de reconexión automática
+                
+                # Refrescar persona activa cada 30 segundos (10 ciclos x 3 segundos)
+                person_check_counter += 1
+                if person_check_counter >= 10:
+                    logger.info("🔄 Verificando si cambió la persona seleccionada...")
+                    new_active_person = self.get_active_person()
+                    
+                    # Comparar IDs de Firebase para detectar cambios
+                    current_firebase_id = self.active_person.get('firebase_id') if self.active_person else None
+                    new_firebase_id = new_active_person.get('firebase_id') if new_active_person else None
+                    
+                    if new_firebase_id and new_firebase_id != current_firebase_id:
+                        old_name = self.active_person.get('nombre') if self.active_person else 'Ninguna'
+                        new_name = new_active_person.get('nombre')
+                        logger.info(f"👤 Cambiando persona activa: {old_name} → {new_name}")
+                        self.active_person = new_active_person
+                        self.update_person_session(self.active_person)
+                    elif not new_active_person and self.active_person:
+                        logger.warning("⚠️ No se encontró persona activa, manteniendo la anterior")
+                    
+                    person_check_counter = 0
                 
                 # Esperar antes de la próxima verificación
                 await asyncio.sleep(3)
@@ -359,8 +483,13 @@ class BLEArmSensorMaster:
             
             logger.info("🎉 Sensor del brazo conectado exitosamente!")
             
-            # 3. Registrar persona (opcional)
-            self.register_initial_person()
+            # 3. Obtener persona activa del monitor
+            self.active_person = self.get_active_person()
+            if self.active_person:
+                logger.info(f"👤 Usando persona: {self.active_person.get('nombre')} ({self.active_person.get('edad')} años)")
+                self.update_person_session(self.active_person)
+            else:
+                logger.warning("⚠️ No hay persona seleccionada en el monitor. Los datos se guardarán sin asociar a una persona específica.")
             
             # 4. Iniciar monitoreo
             monitor_task = asyncio.create_task(self.monitor_connection())
@@ -368,6 +497,10 @@ class BLEArmSensorMaster:
             # 5. Mantener el programa corriendo
             logger.info("📡 Recolectando datos del brazo... Presiona Ctrl+C para salir")
             logger.info(f"🔥 Enviando a Firebase cada {self.firebase_interval} segundos")
+            if self.active_person:
+                logger.info(f"👤 Datos asociados a: {self.active_person.get('nombre')}")
+            else:
+                logger.info("⚠️ Datos no asociados a persona específica - Selecciona una persona en el monitor web")
             
             start_time = time.time()
             while self.running:

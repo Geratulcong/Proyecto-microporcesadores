@@ -29,10 +29,14 @@ class FirebaseManager:
     def __init__(self, firebase_url):
         self.firebase_url = firebase_url
         
-    def send_sensor_data(self, combined_data):
+    def send_sensor_data(self, combined_data, person_id=None):
         """Envía datos combinados de sensores a Firebase"""
         try:
-            # Preparar datos para Firebase
+            # Si hay un person_id, agregar a su historial
+            if person_id:
+                return self.add_combined_reading_to_person(person_id, combined_data)
+            
+            # Si no hay person_id, usar el método original (tabla general)
             firebase_data = {
                 'timestamp': combined_data.get('timestamp'),
                 'raspberry_id': 'raspberry_pi_maestro_001',
@@ -41,7 +45,7 @@ class FirebaseManager:
                 'session_id': f"session_{int(time.time())}"
             }
             
-            # URL para enviar datos de sensores
+            # URL para enviar datos de sensores (tabla general)
             url = f"{self.firebase_url}/sensor_readings.json"
             
             # Enviar datos
@@ -49,7 +53,7 @@ class FirebaseManager:
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ Datos enviados a Firebase. ID: {result['name']}")
+                logger.info(f"✅ Datos enviados a Firebase (tabla general). ID: {result['name']}")
                 return True, result['name']
             else:
                 logger.error(f"❌ Error Firebase: {response.status_code} - {response.text}")
@@ -61,14 +65,84 @@ class FirebaseManager:
         except Exception as e:
             logger.error(f"❌ Error inesperado Firebase: {e}")
             return False, None
+
+    def add_combined_reading_to_person(self, person_firebase_id, combined_data):
+        """Agrega una lectura combinada (brazo + pie) al historial de la persona"""
+        try:
+            if not person_firebase_id:
+                logger.error("❌ No se puede agregar: person_firebase_id es None")
+                return False, None
+                
+            # Crear registro de lectura combinada
+            combined_reading = {
+                'timestamp': datetime.now().isoformat(),
+                'raspberry_timestamp': combined_data.get('timestamp'),
+                'session_id': f"session_{int(time.time())}",
+                'sensor_type': 'combined',  # brazo + pie
+                'brazo': {
+                    'device_id': combined_data.get('brazo', {}).get('device_id', 'brazo_sensor'),
+                    'arduino_timestamp': combined_data.get('brazo', {}).get('arduino_timestamp', 0),
+                    'accelerometer': {
+                        'x': combined_data.get('brazo', {}).get('accelerometer_x', 0),
+                        'y': combined_data.get('brazo', {}).get('accelerometer_y', 0),
+                        'z': combined_data.get('brazo', {}).get('accelerometer_z', 0)
+                    },
+                    'gyroscope': {
+                        'x': combined_data.get('brazo', {}).get('gyroscope_x', 0),
+                        'y': combined_data.get('brazo', {}).get('gyroscope_y', 0),
+                        'z': combined_data.get('brazo', {}).get('gyroscope_z', 0)
+                    }
+                },
+                'pie': {
+                    'device_id': combined_data.get('pie', {}).get('device_id', 'pie_sensor'),
+                    'arduino_timestamp': combined_data.get('pie', {}).get('arduino_timestamp', 0),
+                    'accelerometer': {
+                        'x': combined_data.get('pie', {}).get('accelerometer_x', 0),
+                        'y': combined_data.get('pie', {}).get('accelerometer_y', 0),
+                        'z': combined_data.get('pie', {}).get('accelerometer_z', 0)
+                    },
+                    'gyroscope': {
+                        'x': combined_data.get('pie', {}).get('gyroscope_x', 0),
+                        'y': combined_data.get('pie', {}).get('gyroscope_y', 0),
+                        'z': combined_data.get('pie', {}).get('gyroscope_z', 0)
+                    }
+                }
+            }
+            
+            # URL para agregar al array de lecturas de sensor
+            url = f"{self.firebase_url}/persons/{person_firebase_id}/sensor_readings.json"
+            
+            logger.info(f"➕ Agregando lectura combinada en: {url}")
+            
+            # POST agrega un nuevo elemento al array
+            response = requests.post(url, json=combined_reading, timeout=10)
+            
+            if response.status_code == 200:
+                # Actualizar timestamp de última actividad
+                last_activity_url = f"{self.firebase_url}/persons/{person_firebase_id}/last_sensor_update.json"
+                requests.put(last_activity_url, json=datetime.now().isoformat(), timeout=5)
+                
+                logger.info(f"✅ Nueva lectura combinada agregada al historial de: {person_firebase_id}")
+                return True, person_firebase_id
+            else:
+                logger.error(f"❌ Error HTTP {response.status_code}: {response.text}")
+                return False, None
+                
+        except Exception as e:
+            logger.error(f"❌ Error agregando lectura combinada: {e}")
+            return False, None
     
     def send_person_data(self, person_info):
-        """Envía información de persona a Firebase"""
+        """Envía información de persona a Firebase con estructura para historial de sensores"""
         try:
             person_data = {
                 **person_info,
                 'timestamp': datetime.now().isoformat(),
-                'raspberry_id': 'raspberry_pi_maestro_001'
+                'raspberry_id': 'raspberry_pi_maestro_001',
+                'sensor_readings': {},  # Inicializar array vacío para historial de sensores
+                'last_sensor_update': None,  # Timestamp de última actualización del sensor
+                'total_readings_count': 0,  # Contador total de lecturas
+                'session_active': False  # Estado de sesión
             }
             
             url = f"{self.firebase_url}/persons.json"
@@ -76,7 +150,7 @@ class FirebaseManager:
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ Persona registrada en Firebase. ID: {result['name']}")
+                logger.info(f"✅ Persona registrada con estructura de sensores. ID: {result['name']}")
                 return True, result['name']
             else:
                 logger.error(f"❌ Error registrando persona: {response.status_code}")
@@ -85,6 +159,39 @@ class FirebaseManager:
         except Exception as e:
             logger.error(f"❌ Error registrando persona: {e}")
             return False, None
+
+    def get_active_person(self):
+        """Obtiene la persona activa desde Firebase"""
+        try:
+            response = requests.get(f"{self.firebase_url}/persons.json", timeout=10)
+            
+            if response.status_code == 200:
+                persons_data = response.json()
+                if persons_data:
+                    logger.info(f"📋 Encontradas {len(persons_data)} personas en Firebase")
+                    
+                    # Buscar persona activa
+                    for firebase_id, person_data in persons_data.items():
+                        if person_data.get('es_activa', False):
+                            logger.info(f"✅ Persona activa: {person_data.get('nombre')} [ID: {firebase_id}]")
+                            person_data['firebase_id'] = firebase_id
+                            return person_data
+                    
+                    # Si no hay activa, usar la primera
+                    first_id, first_person = next(iter(persons_data.items()))
+                    first_person['firebase_id'] = first_id
+                    logger.warning(f"⚠️ No hay persona activa, usando: {first_person.get('nombre')} [ID: {first_id}]")
+                    return first_person
+                else:
+                    logger.error("❌ No hay personas registradas en Firebase")
+                    return None
+            else:
+                logger.error(f"❌ Error HTTP {response.status_code} obteniendo personas")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo persona activa: {e}")
+            return None
 
 class BLESensorMaster:
     def __init__(self):
@@ -111,6 +218,10 @@ class BLESensorMaster:
         
         # Firebase Manager
         self.firebase = FirebaseManager(FIREBASE_URL)
+        
+        # Persona activa del monitor
+        self.active_person = None
+        self.combined_readings_count = 0  # Contador de lecturas combinadas guardadas
         
         # Control de envío a Firebase
         self.last_firebase_send = 0
@@ -416,8 +527,14 @@ class BLESensorMaster:
             
             logger.info("🎉 Todos los sensores conectados exitosamente!")
             
-            # 3. Registrar persona (opcional)
-            self.register_initial_person()
+            # 3. Obtener persona activa del monitor
+            self.active_person = self.firebase.get_active_person()
+            if self.active_person:
+                logger.info(f"👤 Usando persona: {self.active_person.get('nombre')} ({self.active_person.get('edad')} años)")
+            else:
+                logger.warning("⚠️ No hay persona seleccionada en el monitor.")
+                logger.info("💡 Registrando persona inicial...")
+                self.register_initial_person()
             
             # 4. Iniciar monitoreo
             monitor_task = asyncio.create_task(self.monitor_connections())
@@ -425,6 +542,10 @@ class BLESensorMaster:
             # 5. Mantener el programa corriendo
             logger.info("📡 Recolectando datos... Presiona Ctrl+C para salir")
             logger.info(f"🔥 Enviando a Firebase cada {self.firebase_interval} segundos")
+            if self.active_person:
+                logger.info(f"👤 Datos asociados a: {self.active_person.get('nombre')}")
+            else:
+                logger.info("⚠️ Datos no asociados a persona específica")
             
             start_time = time.time()
             while self.running:

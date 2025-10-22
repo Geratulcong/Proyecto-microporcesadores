@@ -1,12 +1,13 @@
 """
-Raspberry Pi - Maestro BLE Solo Brazo (Central)
+Raspberry Pi - Maestro BLE Dual Independiente (Central)
 Proyecto Microprocesadores - Sistema de Sensores Corporales
 
 Este script actúa como MAESTRO BLE que:
-- Escanea y se conecta únicamente al Arduino Nano 33 BLE Sense del BRAZO
-- Recolecta datos solo del sensor del brazo
-- Procesa y almacena los datos del brazo
-- Envía a Firebase o base de datos
+- Escanea y se conecta a sensores del BRAZO y/o PIE
+- Funciona independientemente: cada sensor puede conectarse por separado
+- Recolecta datos de ambos sensores cuando están disponibles
+- Procesa y almacena los datos de forma unificada
+- Envía a Firebase con estructura combinada
 """
 
 import asyncio
@@ -31,31 +32,55 @@ class FirebaseManager:
     def __init__(self, firebase_url):
         self.firebase_url = firebase_url
         
-    def add_sensor_reading_to_person(self, person_firebase_id, arm_data):
+    def add_sensor_reading_to_person(self, person_firebase_id, sensor_data):
         """Agrega una nueva lectura del sensor al historial de la persona"""
         try:
             if not person_firebase_id:
-                logger.error("❌ No se puede agregar: person_firebase_id es None")
+                logger.error("No se puede agregar: person_firebase_id es None")
                 return False, None
                 
-            # Crear registro de lectura del sensor
+            # Crear registro de lectura del sensor (puede ser brazo, pie o combinado)
             sensor_reading = {
                 'timestamp': datetime.now().isoformat(),
-                'raspberry_timestamp': arm_data.get('timestamp'),
-                'arduino_timestamp': arm_data.get('brazo', {}).get('arduino_timestamp', 0),
-                'device_id': arm_data.get('brazo', {}).get('device_id', 'brazo_sensor'),
-                'sensor_type': 'brazo',
-                'accelerometer': {
-                    'x': arm_data.get('brazo', {}).get('accelerometer_x', 0),
-                    'y': arm_data.get('brazo', {}).get('accelerometer_y', 0),
-                    'z': arm_data.get('brazo', {}).get('accelerometer_z', 0)
-                },
-                'gyroscope': {
-                    'x': arm_data.get('brazo', {}).get('gyroscope_x', 0),
-                    'y': arm_data.get('brazo', {}).get('gyroscope_y', 0),
-                    'z': arm_data.get('brazo', {}).get('gyroscope_z', 0)
-                }
+                'raspberry_timestamp': sensor_data.get('timestamp'),
+                'sensor_type': sensor_data.get('sensor_type', 'unknown')
             }
+            
+            # Agregar datos del brazo si están disponibles
+            if 'brazo' in sensor_data:
+                brazo_data = sensor_data['brazo']
+                sensor_reading['brazo'] = {
+                    'device_id': brazo_data.get('device_id', 'brazo_sensor'),
+                    'arduino_timestamp': brazo_data.get('arduino_timestamp', 0),
+                    'accelerometer': {
+                        'x': brazo_data.get('accelerometer_x', 0),
+                        'y': brazo_data.get('accelerometer_y', 0),
+                        'z': brazo_data.get('accelerometer_z', 0)
+                    },
+                    'gyroscope': {
+                        'x': brazo_data.get('gyroscope_x', 0),
+                        'y': brazo_data.get('gyroscope_y', 0),
+                        'z': brazo_data.get('gyroscope_z', 0)
+                    }
+                }
+            
+            # Agregar datos del pie si están disponibles
+            if 'pie' in sensor_data:
+                pie_data = sensor_data['pie']
+                sensor_reading['pie'] = {
+                    'device_id': pie_data.get('device_id', 'pie_sensor'),
+                    'arduino_timestamp': pie_data.get('arduino_timestamp', 0),
+                    'accelerometer': {
+                        'x': pie_data.get('accelerometer_x', 0),
+                        'y': pie_data.get('accelerometer_y', 0),
+                        'z': pie_data.get('accelerometer_z', 0)
+                    },
+                    'gyroscope': {
+                        'x': pie_data.get('gyroscope_x', 0),
+                        'y': pie_data.get('gyroscope_y', 0),
+                        'z': pie_data.get('gyroscope_z', 0)
+                    }
+                }
             
             # URL para agregar al array de lecturas de sensor
             url = f"{self.firebase_url}/persons/{person_firebase_id}/sensor_readings.json"
@@ -104,17 +129,23 @@ class FirebaseManager:
             logger.error(f"❌ Error registrando persona: {e}")
             return False, None
 
-class BLEArmSensorMaster:
-    def __init__(self, scan_timeout=15, firebase_interval=3.0, debug=False, person_id=None, person_name=None):
+class BLEDualSensorMaster:
+    def __init__(self, scan_timeout=15, firebase_interval=0.3, debug=False, person_id=None, person_name=None):
         # UUIDs del servicio y característica del BRAZO
         self.ARM_SERVICE_UUID = "12345678-1234-1234-1234-123456789abc"
         self.ARM_CHAR_UUID = "12654321-1321-1321-1321-1ba987654321"
         
-        # Cliente BLE del brazo
-        self.arm_client = None
+        # UUIDs del servicio y característica del PIE
+        self.FOOT_SERVICE_UUID = "22345678-2234-2234-2234-223456789abc"
+        self.FOOT_CHAR_UUID = "22654321-2321-2321-2321-2ba987654321"
         
-        # Datos del sensor del brazo
+        # Clientes BLE
+        self.arm_client = None
+        self.foot_client = None
+        
+        # Datos de los sensores
         self.arm_data = {}
+        self.foot_data = {}
         
         # Parámetros configurables
         self.scan_timeout = scan_timeout
@@ -128,8 +159,9 @@ class BLEArmSensorMaster:
             logging.getLogger().setLevel(logging.DEBUG)
             logger.info("🐛 Modo debug activado")
         
-        # Control de conexión
+        # Control de conexión independiente
         self.arm_connected = False
+        self.foot_connected = False
         self.running = True
         
         # Firebase Manager
@@ -138,7 +170,9 @@ class BLEArmSensorMaster:
         # Control de envío a Firebase
         self.last_firebase_send = 0
         self.data_count = 0
-        self.arm_readings_count = 0  # Contador de lecturas guardadas
+        self.arm_readings_count = 0
+        self.foot_readings_count = 0
+        self.combined_readings_count = 0
         
         # Persona activa del monitor
         if person_id and person_name:
@@ -214,8 +248,91 @@ class BLEArmSensorMaster:
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Error conectando al BRAZO: {e}")
+            logger.error(f"Error conectando al BRAZO: {e}")
             return False
+
+    async def scan_for_foot_device(self, timeout=None):
+        """Escanea dispositivos BLE para encontrar el Arduino del pie"""
+        timeout = timeout or self.scan_timeout
+        logger.info(f"Escaneando dispositivo del PIE por {timeout}s...")
+        
+        foot_device = None
+        
+        devices = await BleakScanner.discover(timeout=timeout)
+        
+        for device in devices:
+            if device.name:
+                # Sensor del PIE
+                if device.name == "Arduino_Pie_Sensor":
+                    foot_device = device
+                    logger.info(f"Sensor PIE encontrado: {device.address}")
+                    break
+                # Búsqueda alternativa
+                elif "Arduino" in device.name:
+                    if "pie" in device.name.lower() or "foot" in device.name.lower():
+                        foot_device = device
+                        logger.info(f"Sensor PIE (alternativo) encontrado: {device.address}")
+                        break
+        
+        return foot_device
+
+    async def connect_to_foot(self, device):
+        """Conecta al sensor del pie"""
+        try:
+            logger.info(f"Conectando al sensor PIE: {device.address}")
+            
+            self.foot_client = BleakClient(device.address)
+            await self.foot_client.connect()
+            
+            if self.foot_client.is_connected:
+                logger.info("Conectado al sensor PIE")
+                self.foot_connected = True
+                
+                # Activar notificaciones
+                await self.foot_client.start_notify(
+                    self.FOOT_CHAR_UUID, 
+                    self.foot_notification_handler
+                )
+                logger.info("Notificaciones PIE activadas")
+                return True
+            else:
+                logger.error("Falló conexión al sensor PIE")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error conectando al PIE: {e}")
+            return False
+
+    async def scan_for_both_sensors(self, timeout=None):
+        """Escanea ambos sensores en paralelo de forma independiente"""
+        timeout = timeout or self.scan_timeout
+        logger.info(f"Escaneando sensores BRAZO y PIE por {timeout}s...")
+        
+        arm_device = None
+        foot_device = None
+        
+        devices = await BleakScanner.discover(timeout=timeout)
+        
+        for device in devices:
+            if device.name:
+                # Buscar sensor del BRAZO
+                if device.name == "Arduino_Brazo_Sensor":
+                    arm_device = device
+                    logger.info(f"Sensor BRAZO encontrado: {device.address}")
+                # Buscar sensor del PIE
+                elif device.name == "Arduino_Pie_Sensor":
+                    foot_device = device
+                    logger.info(f"Sensor PIE encontrado: {device.address}")
+                # Búsquedas alternativas
+                elif "Arduino" in device.name:
+                    if "brazo" in device.name.lower() or "arm" in device.name.lower():
+                        arm_device = device
+                        logger.info(f"Sensor BRAZO (alternativo): {device.address}")
+                    elif "pie" in device.name.lower() or "foot" in device.name.lower():
+                        foot_device = device
+                        logger.info(f"Sensor PIE (alternativo): {device.address}")
+        
+        return arm_device, foot_device
     
     def transform_arduino_data(self, raw_data):
         """Transforma datos del formato Arduino al formato esperado por React"""
@@ -270,6 +387,19 @@ class BLEArmSensorMaster:
         except Exception as e:
             logger.error(f"❌ Error procesando datos BRAZO: {e}")
     
+    def foot_notification_handler(self, sender, data):
+        """Maneja datos recibidos del sensor del pie"""
+        try:
+            json_data = data.decode('utf-8')
+            raw_foot_data = json.loads(json_data)
+            self.foot_data = self.transform_arduino_data(raw_foot_data)
+            logger.info(f"🦶 Datos PIE (original): {raw_foot_data}")
+            logger.info(f"🦶 Datos PIE (transformado): {self.foot_data}")
+            self.process_foot_data()
+            
+        except Exception as e:
+            logger.error(f"❌ Error procesando datos PIE: {e}")
+    
     def process_arm_data(self):
         """Procesa datos del sensor del brazo"""
         if self.arm_data:
@@ -300,25 +430,57 @@ class BLEArmSensorMaster:
                 self.send_to_firebase(arm_reading)
                 self.last_firebase_send = current_time
     
-    def send_to_firebase(self, arm_reading):
-        """Actualiza los datos del sensor del brazo en la persona activa"""
+    def process_foot_data(self):
+        """Procesa datos del sensor del pie"""
+        if self.foot_data:
+            foot_reading = {
+                "timestamp": datetime.now().isoformat(),
+                "pie": self.foot_data
+            }
+            
+            # Agregar información de la persona activa si está disponible
+            if self.active_person:
+                foot_reading.update({
+                    "nombre": self.active_person.get('nombre'),
+                    "persona_id": self.active_person.get('id'),
+                    "edad": self.active_person.get('edad'),
+                    "genero": self.active_person.get('genero')
+                })
+            
+            self.data_count += 1
+            
+            if self.active_person:
+                logger.info(f"🎯 Datos Pie #{self.data_count} para {self.active_person.get('nombre')}")
+            else:
+                logger.info(f"🎯 Datos Pie #{self.data_count} (sin persona asignada)")
+            
+            # Enviar a Firebase según intervalo
+            current_time = time.time()
+            if current_time - self.last_firebase_send >= self.firebase_interval:
+                self.send_to_firebase(foot_reading)
+                self.last_firebase_send = current_time
+
+    def send_to_firebase(self, sensor_reading):
+        """Actualiza los datos del sensor (brazo o pie) en la persona activa"""
         def firebase_sender():
             try:
                 if self.active_person and self.active_person.get('firebase_id'):
                     # Agregar nueva lectura del sensor al historial de la persona
                     success, person_id = self.firebase.add_sensor_reading_to_person(
                         self.active_person.get('firebase_id'), 
-                        arm_reading
+                        sensor_reading
                     )
                     if success:
-                        logger.info(f"� Firebase: Nueva lectura del brazo agregada a {self.active_person.get('nombre')}")
+                        sensor_type = "brazo" if "brazo" in sensor_reading else "pie"
+                        logger.info(f"✅ Firebase: Nueva lectura de {sensor_type} agregada a {self.active_person.get('nombre')}")
                         # Incrementar contador de lecturas
-                        if hasattr(self, 'arm_readings_count'):
-                            self.arm_readings_count += 1
+                        if hasattr(self, f'{sensor_type}_readings_count'):
+                            setattr(self, f'{sensor_type}_readings_count', getattr(self, f'{sensor_type}_readings_count') + 1)
                         else:
-                            self.arm_readings_count = 1
+                            setattr(self, f'{sensor_type}_readings_count', 1)
                     else:
-                        logger.warning(f"⚠️ Firebase: Error agregando lectura del brazo para {self.active_person.get('nombre')}")
+                        sensor_type = "brazo" if "brazo" in sensor_reading else "pie"
+                        logger.warning(f"⚠️ Firebase: Error agregando lectura de {sensor_type} para {self.active_person.get('nombre')}")
                 else:
                     logger.warning("⚠️ No hay persona activa seleccionada. Datos no guardados.")
                     logger.info("💡 Selecciona una persona en el monitor web para guardar los datos del sensor")
@@ -378,21 +540,46 @@ class BLEArmSensorMaster:
             return 0
 
     def update_person_session(self, person_data):
-        """Actualiza la sesión de la persona activa con información del brazo"""
+        """Actualiza la sesión de la persona activa con información de sensores conectados"""
         if not person_data or not person_data.get('firebase_id'):
             return
             
         try:
-            # Solo los campos de sesión que queremos actualizar
-            session_update = {
-                'brazo_session_start': datetime.now().isoformat(),
-                'device_brazo_connected': True,
-                'raspberry_brazo_id': 'raspberry_pi_brazo_001',
-                'last_brazo_connection': datetime.now().isoformat(),
-                'sensor_mode': 'brazo_activo'
-            }
+            # Campos de sesión basados en sensores conectados
+            session_update = {}
+            current_time = datetime.now().isoformat()
             
-            logger.info(f"📝 Actualizando sesión del brazo para: {person_data.get('nombre', 'Usuario')}")
+            if self.arm_connected:
+                session_update.update({
+                    'brazo_session_start': current_time,
+                    'device_brazo_connected': True,
+                    'raspberry_brazo_id': 'raspberry_pi_brazo_001',
+                    'last_brazo_connection': current_time
+                })
+                
+            if self.foot_connected:
+                session_update.update({
+                    'pie_session_start': current_time,
+                    'device_pie_connected': True,
+                    'raspberry_pie_id': 'raspberry_pi_pie_001',
+                    'last_pie_connection': current_time
+                })
+            
+            # Determinar modo del sensor
+            if self.arm_connected and self.foot_connected:
+                session_update['sensor_mode'] = 'dual_activo'
+            elif self.arm_connected:
+                session_update['sensor_mode'] = 'brazo_activo'
+            elif self.foot_connected:
+                session_update['sensor_mode'] = 'pie_activo'
+            
+            active_sensors = []
+            if self.arm_connected:
+                active_sensors.append("brazo")
+            if self.foot_connected:
+                active_sensors.append("pie")
+            
+            logger.info(f"📝 Actualizando sesión de {' y '.join(active_sensors)} para: {person_data.get('nombre', 'Usuario')}")
             
             # URL para actualizar la persona existente específica
             url = f"{self.firebase.firebase_url}/persons/{person_data.get('firebase_id')}.json"
@@ -401,22 +588,25 @@ class BLEArmSensorMaster:
             response = requests.patch(url, json=session_update, timeout=10)
             
             if response.status_code == 200:
-                logger.info("✅ Sesión del brazo actualizada exitosamente")
+                logger.info(f"✅ Sesión de {' y '.join(active_sensors)} actualizada exitosamente")
             else:
-                logger.warning(f"⚠️ Error actualizando sesión del brazo: {response.status_code}")
+                logger.warning(f"⚠️ Error actualizando sesión de {' y '.join(active_sensors)}: {response.status_code}")
                 
         except Exception as e:
             logger.error(f"❌ Error actualizando sesión: {e}")
     
     def show_statistics(self):
-        """Muestra estadísticas del sistema"""
-        logger.info("📊 ESTADÍSTICAS DEL SISTEMA (SOLO BRAZO)")
-        logger.info(f"   📈 Datos recibidos: {self.data_count}")
+        """Muestra estadísticas del sistema dual"""
+        logger.info("📊 ESTADÍSTICAS DEL SISTEMA DUAL (BRAZO + PIE)")
+        logger.info(f"   📈 Datos totales recibidos: {self.data_count}")
         logger.info(f"   🔗 Brazo conectado: {'✅' if self.arm_connected else '❌'}")
+        logger.info(f"   🔗 Pie conectado: {'✅' if self.foot_connected else '❌'}")
         if self.active_person:
             logger.info(f"   👤 Persona activa: {self.active_person.get('nombre')} (ID: {self.active_person.get('firebase_id')})")
-            readings_count = getattr(self, 'arm_readings_count', 0)
-            logger.info(f"   📊 Lecturas guardadas: {readings_count}")
+            arm_readings = getattr(self, 'brazo_readings_count', 0)
+            foot_readings = getattr(self, 'pie_readings_count', 0)
+            logger.info(f"   📊 Lecturas brazo: {arm_readings}")
+            logger.info(f"   📊 Lecturas pie: {foot_readings}")
         else:
             logger.info(f"   👤 Persona activa: Sin seleccionar")
         logger.info(f"   🔥 Último envío Firebase: {int(time.time() - self.last_firebase_send)}s atrás")
@@ -424,7 +614,7 @@ class BLEArmSensorMaster:
         logger.info("─" * 50)
     
     async def monitor_connection(self):
-        """Monitor para reconectar el dispositivo del brazo si se desconecta"""
+        """Monitor para reconectar ambos dispositivos si se desconectan"""
         person_check_counter = 0
         
         while self.running:
@@ -433,6 +623,12 @@ class BLEArmSensorMaster:
                 if self.arm_client and not self.arm_client.is_connected:
                     logger.warning("⚠️ Brazo desconectado, reintentando...")
                     self.arm_connected = False
+                    # Aquí podrías implementar lógica de reconexión automática
+                
+                # Verificar conexión del pie
+                if self.foot_client and not self.foot_client.is_connected:
+                    logger.warning("⚠️ Pie desconectado, reintentando...")
+                    self.foot_connected = False
                     # Aquí podrías implementar lógica de reconexión automática
                 
                 # Refrescar persona activa cada 30 segundos (10 ciclos x 3 segundos)
@@ -464,33 +660,73 @@ class BLEArmSensorMaster:
                 await asyncio.sleep(3)
     
     async def disconnect(self):
-        """Desconecta el dispositivo del brazo"""
-        logger.info("🔌 Desconectando dispositivo del brazo...")
+        """Desconecta ambos dispositivos (brazo y pie)"""
+        logger.info("🔌 Desconectando sensores...")
+        
+        disconnect_tasks = []
         
         if self.arm_client and self.arm_client.is_connected:
-            await self.arm_client.disconnect()
+            disconnect_tasks.append(asyncio.create_task(self.arm_client.disconnect()))
+            
+        if self.foot_client and self.foot_client.is_connected:
+            disconnect_tasks.append(asyncio.create_task(self.foot_client.disconnect()))
+            
+        if disconnect_tasks:
+            await asyncio.gather(*disconnect_tasks, return_exceptions=True)
+            
+        if self.arm_connected:
             logger.info("✅ Brazo desconectado")
+        if self.foot_connected:
+            logger.info("✅ Pie desconectado")
     
     async def run(self):
-        """Función principal del maestro BLE para brazo"""
-        logger.info("🚀 Iniciando Maestro BLE (SOLO BRAZO)...")
+        """Función principal del maestro BLE dual (brazo y pie)"""
+        logger.info("🚀 Iniciando Maestro BLE DUAL (BRAZO + PIE)...")
         
         try:
-            # 1. Escanear dispositivo del brazo
-            arm_device = await self.scan_for_arm_device()
+            # 1. Escanear ambos dispositivos en paralelo
+            logger.info("🔍 Escaneando sensores de brazo y pie...")
+            scan_tasks = []
             
-            if not arm_device:
-                logger.error("❌ No se encontró sensor del BRAZO")
+            arm_scan_task = asyncio.create_task(self.scan_for_arm_device())
+            foot_scan_task = asyncio.create_task(self.scan_for_foot_device())
+            
+            # Esperar a que terminen ambas exploraciones
+            arm_device, foot_device = await asyncio.gather(arm_scan_task, foot_scan_task, return_exceptions=True)
+            
+            # Verificar resultados de exploración
+            arm_found = arm_device and not isinstance(arm_device, Exception)
+            foot_found = foot_device and not isinstance(foot_device, Exception)
+            
+            if not arm_found and not foot_found:
+                logger.error("❌ No se encontró ningún sensor (ni brazo ni pie)")
                 return
             
-            # 2. Conectar dispositivo del brazo
-            arm_connected = await self.connect_to_arm(arm_device)
+            logger.info(f"📡 Sensores encontrados: Brazo={'✅' if arm_found else '❌'} | Pie={'✅' if foot_found else '❌'}")
             
-            if not arm_connected:
-                logger.error("❌ No se pudo conectar al sensor del brazo")
-                return
+            # 2. Conectar dispositivos encontrados
+            connection_tasks = []
+            if arm_found:
+                connection_tasks.append(asyncio.create_task(self.connect_to_arm(arm_device)))
+            if foot_found:
+                connection_tasks.append(asyncio.create_task(self.connect_to_foot(foot_device)))
             
-            logger.info("🎉 Sensor del brazo conectado exitosamente!")
+            # Esperar conexiones
+            if connection_tasks:
+                connection_results = await asyncio.gather(*connection_tasks, return_exceptions=True)
+                
+                # Verificar conexiones exitosas
+                connections_success = sum(1 for result in connection_results if result and not isinstance(result, Exception))
+                
+                if connections_success == 0:
+                    logger.error("❌ No se pudo conectar a ningún sensor")
+                    return
+                
+                logger.info(f"🎉 Conectado a {connections_success} sensor(es)")
+                if self.arm_connected:
+                    logger.info("   ✅ Sensor del brazo activo")
+                if self.foot_connected:
+                    logger.info("   ✅ Sensor del pie activo")
             
             # 3. Obtener persona activa del monitor (si no se configuró desde parámetros)
             if not self.active_person:
@@ -500,7 +736,7 @@ class BLEArmSensorMaster:
                 logger.info(f"👤 Usando persona: {self.active_person.get('nombre')} (ID: {self.active_person.get('firebase_id')})")
                 if self.active_person.get('edad'):
                     logger.info(f"   Edad: {self.active_person.get('edad')} años")
-                # Actualizar sesión solo si tenemos datos completos de la persona
+                # Actualizar sesión para sensores conectados
                 if self.active_person.get('edad') and self.active_person.get('genero'):
                     self.update_person_session(self.active_person)
             else:
@@ -510,8 +746,15 @@ class BLEArmSensorMaster:
             monitor_task = asyncio.create_task(self.monitor_connection())
             
             # 5. Mantener el programa corriendo
-            logger.info("📡 Recolectando datos del brazo... Presiona Ctrl+C para salir")
+            active_sensors = []
+            if self.arm_connected:
+                active_sensors.append("brazo")
+            if self.foot_connected:
+                active_sensors.append("pie")
+            
+            logger.info(f"📡 Recolectando datos de {' y '.join(active_sensors)}... Presiona Ctrl+C para salir")
             logger.info(f"🔥 Enviando a Firebase cada {self.firebase_interval} segundos")
+            
             if self.active_person:
                 logger.info(f"👤 Datos asociados a: {self.active_person.get('nombre')}")
             else:
@@ -526,7 +769,7 @@ class BLEArmSensorMaster:
                 await asyncio.sleep(1)
                 
         except KeyboardInterrupt:
-            logger.info("⏹️ Deteniendo maestro BLE del brazo...")
+            logger.info("⏹️ Deteniendo maestro BLE dual...")
             self.running = False
             
         finally:
@@ -536,7 +779,7 @@ class BLEArmSensorMaster:
 def parse_arguments():
     """Parsear argumentos de línea de comandos"""
     parser = argparse.ArgumentParser(
-        description="Maestro BLE Solo Brazo - Conectar sensor del brazo",
+        description="Maestro BLE Dual - Conectar sensores de brazo y pie independientemente",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -550,8 +793,8 @@ def parse_arguments():
     parser.add_argument(
         '--firebase_interval', 
         type=float, 
-        default=3.0,
-        help='Intervalo de envío a Firebase en segundos (acepta decimales, ej: 0.1 para 100ms)'
+        default=0.3,
+        help='Intervalo de envío a Firebase en segundos (acepta decimales entre 0.1-0.5)'
     )
     
     parser.add_argument(
@@ -579,7 +822,7 @@ async def main():
     # Parsear argumentos de línea de comandos
     args = parse_arguments()
     
-    logger.info("🔵 Modo: SOLO SENSOR DEL BRAZO")
+    logger.info("🔵 Modo: SENSORES DUAL (BRAZO + PIE)")
     logger.info(f"⚙️ Configuración:")
     logger.info(f"   - Timeout escaneo: {args.scan_timeout}s")
     logger.info(f"   - Intervalo Firebase: {args.firebase_interval}s")
@@ -589,8 +832,8 @@ async def main():
     if args.person_name:
         logger.info(f"   - Persona: {args.person_name}")
     
-    # Crear maestro con parámetros
-    master = BLEArmSensorMaster(
+    # Crear maestro dual con parámetros
+    master = BLEDualSensorMaster(
         scan_timeout=args.scan_timeout,
         firebase_interval=args.firebase_interval,
         debug=args.debug,
@@ -613,5 +856,5 @@ if __name__ == "__main__":
         logger.error("❌ Instala bleak: pip install bleak")
         exit(1)
     
-    # Ejecutar maestro del brazo
+    # Ejecutar maestro dual (brazo + pie)
     asyncio.run(main())

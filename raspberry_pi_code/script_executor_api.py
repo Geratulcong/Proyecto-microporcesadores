@@ -168,9 +168,10 @@ AVAILABLE_SCRIPTS = {
             'firebase_interval': {
                 'type': 'number',
                 'description': 'Intervalo de envío a Firebase (segundos)',
-                'default': 5,
-                'min': 1,
-                'max': 30
+                'default': 0.3,
+                'min': 0.1,
+                'max': 0.5,
+                'step': 0.1
             },
             'debug': {
                 'type': 'boolean',
@@ -195,9 +196,10 @@ AVAILABLE_SCRIPTS = {
             'firebase_interval': {
                 'type': 'number',
                 'description': 'Intervalo de envío a Firebase (segundos)',
-                'default': 3,
-                'min': 1,
-                'max': 15
+                'default': 0.3,
+                'min': 0.1,
+                'max': 0.5,
+                'step': 0.1
             },
             'debug': {
                 'type': 'boolean',
@@ -268,9 +270,9 @@ AVAILABLE_SCRIPTS = {
             'intervalo': {
                 'type': 'number',
                 'description': 'Intervalo entre mensajes (segundos)',
-                'default': 1.0,
+                'default': 0.3,
                 'min': 0.1,
-                'max': 10.0,
+                'max': 0.5,
                 'step': 0.1
             },
             'formato_json': {

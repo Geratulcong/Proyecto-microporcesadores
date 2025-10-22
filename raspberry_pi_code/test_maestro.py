@@ -11,7 +11,7 @@ import asyncio
 import json
 import requests
 import time
-from maestro_ble import BLESensorMaster, logger
+from maestro import BLESensorMaster, logger
 
 def test_firebase_connection():
     """Prueba la conexión a Firebase"""

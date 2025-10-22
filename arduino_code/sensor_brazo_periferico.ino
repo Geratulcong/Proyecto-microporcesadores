@@ -30,14 +30,7 @@ float gyro_x, gyro_y, gyro_z;
 unsigned long lastReading = 0;
 
 // ⚡ CONFIGURACIÓN DE VELOCIDAD - Configurable dinámicamente via BLE
-unsigned long readingInterval = 1000;  // Valor inicial: 1 segundo
-
-// Valores predefinidos disponibles
-const unsigned long ULTRA_FAST = 100;   // 0.1s - Ultra rápido (10 Hz)
-const unsigned long VERY_FAST = 500;    // 0.5s - Muy rápido (2 Hz)  
-const unsigned long FAST = 1000;        // 1.0s - Rápido (1 Hz)
-const unsigned long NORMAL = 3000;      // 3.0s - Normal (0.33 Hz)
-const unsigned long SLOW = 5000;        // 5.0s - Lento (0.2 Hz)
+unsigned long readingInterval = 300;  // Valor inicial: 1 segundo
 
 // ID único del dispositivo
 String deviceID = "arduino_brazo_001";
@@ -185,37 +178,6 @@ void handleConfigCommand() {
       configCharacteristic.writeValue("error:invalid_interval");
     }
   }
-  // Procesar comandos predefinidos
-  else if (command == "ultra_fast") {
-    readingInterval = ULTRA_FAST;
-    Serial.println("⚡ Modo Ultra Rápido: 100ms");
-    configCharacteristic.writeValue("mode:ultra_fast");
-  }
-  else if (command == "very_fast") {
-    readingInterval = VERY_FAST;
-    Serial.println("🔥 Modo Muy Rápido: 500ms");
-    configCharacteristic.writeValue("mode:very_fast");
-  }
-  else if (command == "fast") {
-    readingInterval = FAST;
-    Serial.println("💨 Modo Rápido: 1000ms");
-    configCharacteristic.writeValue("mode:fast");
-  }
-  else if (command == "normal") {
-    readingInterval = NORMAL;
-    Serial.println("📊 Modo Normal: 3000ms");
-    configCharacteristic.writeValue("mode:normal");
-  }
-  else if (command == "slow") {
-    readingInterval = SLOW;
-    Serial.println("🐢 Modo Lento: 5000ms");
-    configCharacteristic.writeValue("mode:slow");
-  }
-  else {
-    Serial.println("❓ Comando desconocido");
-    configCharacteristic.writeValue("error:unknown_command");
-  }
-}
 
 void readAndSendSensorData() {
   // Leer IMU

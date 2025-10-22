@@ -364,11 +364,12 @@ def start_script(script_id):
                 if value:  # Solo agregar flags que son True
                     processed_args.append(f"--{key}")
             elif isinstance(value, (str, int, float)):
-                processed_args.extend([f"--{key}", str(value)])
+                # Usar formato --key=value para evitar problemas con valores que comienzan con guión
+                processed_args.append(f"--{key}={str(value)}")
             elif isinstance(value, list):
                 # Para listas, agregar múltiples valores
                 for item in value:
-                    processed_args.extend([f"--{key}", str(item)])
+                    processed_args.append(f"--{key}={str(item)}")
         
         # Crear y ejecutar script
         script_info = AVAILABLE_SCRIPTS[script_id]

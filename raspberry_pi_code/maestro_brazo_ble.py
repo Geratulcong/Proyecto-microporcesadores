@@ -105,7 +105,7 @@ class FirebaseManager:
             return False, None
 
 class BLEArmSensorMaster:
-    def __init__(self, scan_timeout=15, firebase_interval=3, debug=False):
+    def __init__(self, scan_timeout=15, firebase_interval=3.0, debug=False, person_id=None, person_name=None):
         # UUIDs del servicio y característica del BRAZO
         self.ARM_SERVICE_UUID = "12345678-1234-1234-1234-123456789abc"
         self.ARM_CHAR_UUID = "12654321-1321-1321-1321-1ba987654321"
@@ -120,6 +120,8 @@ class BLEArmSensorMaster:
         self.scan_timeout = scan_timeout
         self.firebase_interval = firebase_interval
         self.debug_mode = debug
+        self.person_id = person_id
+        self.person_name = person_name
         
         # Configurar nivel de logging según debug
         if debug:
@@ -139,7 +141,14 @@ class BLEArmSensorMaster:
         self.arm_readings_count = 0  # Contador de lecturas guardadas
         
         # Persona activa del monitor
-        self.active_person = None
+        if person_id and person_name:
+            self.active_person = {
+                'firebase_id': person_id,
+                'nombre': person_name
+            }
+            logger.info(f"👤 Persona configurada desde parámetros: {person_name} (ID: {person_id})")
+        else:
+            self.active_person = None
         
     async def scan_for_arm_device(self, timeout=None):
         """Escanea dispositivos BLE para encontrar el Arduino del brazo"""
@@ -483,11 +492,17 @@ class BLEArmSensorMaster:
             
             logger.info("🎉 Sensor del brazo conectado exitosamente!")
             
-            # 3. Obtener persona activa del monitor
-            self.active_person = self.get_active_person()
+            # 3. Obtener persona activa del monitor (si no se configuró desde parámetros)
+            if not self.active_person:
+                self.active_person = self.get_active_person()
+            
             if self.active_person:
-                logger.info(f"👤 Usando persona: {self.active_person.get('nombre')} ({self.active_person.get('edad')} años)")
-                self.update_person_session(self.active_person)
+                logger.info(f"👤 Usando persona: {self.active_person.get('nombre')} (ID: {self.active_person.get('firebase_id')})")
+                if self.active_person.get('edad'):
+                    logger.info(f"   Edad: {self.active_person.get('edad')} años")
+                # Actualizar sesión solo si tenemos datos completos de la persona
+                if self.active_person.get('edad') and self.active_person.get('genero'):
+                    self.update_person_session(self.active_person)
             else:
                 logger.warning("⚠️ No hay persona seleccionada en el monitor. Los datos se guardarán sin asociar a una persona específica.")
             
@@ -534,15 +549,27 @@ def parse_arguments():
     
     parser.add_argument(
         '--firebase_interval', 
-        type=int, 
-        default=3,
-        help='Intervalo de envío a Firebase en segundos'
+        type=float, 
+        default=3.0,
+        help='Intervalo de envío a Firebase en segundos (acepta decimales, ej: 0.1 para 100ms)'
     )
     
     parser.add_argument(
         '--debug', 
         action='store_true',
         help='Activar modo debug'
+    )
+    
+    parser.add_argument(
+        '--person_id', 
+        type=str,
+        help='ID de Firebase de la persona seleccionada'
+    )
+    
+    parser.add_argument(
+        '--person_name', 
+        type=str,
+        help='Nombre de la persona seleccionada'
     )
     
     return parser.parse_args()
@@ -557,12 +584,18 @@ async def main():
     logger.info(f"   - Timeout escaneo: {args.scan_timeout}s")
     logger.info(f"   - Intervalo Firebase: {args.firebase_interval}s")
     logger.info(f"   - Debug: {'Activado' if args.debug else 'Desactivado'}")
+    if args.person_id:
+        logger.info(f"   - Persona ID: {args.person_id}")
+    if args.person_name:
+        logger.info(f"   - Persona: {args.person_name}")
     
     # Crear maestro con parámetros
     master = BLEArmSensorMaster(
         scan_timeout=args.scan_timeout,
         firebase_interval=args.firebase_interval,
-        debug=args.debug
+        debug=args.debug,
+        person_id=args.person_id,
+        person_name=args.person_name
     )
     
     await master.run()

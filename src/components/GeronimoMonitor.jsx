@@ -4,6 +4,7 @@ import { ref, onValue, query, orderByKey, limitToLast } from 'firebase/database'
 import { database } from '../firebase/config';
 import { getPersons, stopListening } from '../firebase/personService';
 import MainCard from './MainCard';
+import ScriptExecutorService from '../services/scriptExecutorService';
 
 const GeronimoMonitor = () => {
   const [sensorData, setSensorData] = useState(null);
@@ -16,6 +17,11 @@ const GeronimoMonitor = () => {
   const [availablePersons, setAvailablePersons] = useState([]);
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [loadingPersons, setLoadingPersons] = useState(true);
+  
+  // Estados para ejecución de scripts
+  const [scriptExecuting, setScriptExecuting] = useState(false);
+  const [scriptStatus, setScriptStatus] = useState(null);
+  const [firebaseInterval, setFirebaseInterval] = useState(3.0); // Intervalo en segundos
 
   // Cargar personas disponibles
   useEffect(() => {
@@ -106,13 +112,46 @@ const GeronimoMonitor = () => {
     return () => unsubscribe();
   }, [selectedPerson]); // Dependencia para recargar cuando cambie la persona
 
+  // Función para ejecutar script automáticamente
+  const executeScriptForPerson = async (person) => {
+    setScriptExecuting(true);
+    setScriptStatus('Iniciando script del brazo...');
+    
+    try {
+      // Ejecutar el script maestro_brazo_ble con la persona seleccionada
+      const result = await ScriptExecutorService.executeBrazoScript({
+        person_id: person.id,
+        person_name: person.nombre,
+        firebase_interval: firebaseInterval
+      });
+      
+      if (result.success) {
+        setScriptStatus('✅ Script del brazo iniciado correctamente');
+        setConnectionStatus('Conectando sensores...');
+      } else {
+        setScriptStatus('❌ Error iniciando script: ' + result.error);
+        setConnectionStatus('Error de conexión');
+      }
+    } catch (error) {
+      setScriptStatus('❌ Error inesperado: ' + error.message);
+      setConnectionStatus('Error inesperado');
+    }
+    
+    setScriptExecuting(false);
+  };
+
   // Función para cambiar la persona seleccionada
-  const handlePersonChange = (person) => {
+  const handlePersonChange = async (person) => {
     setSelectedPerson(person);
     setSensorData(null);
-    setConnectionStatus('Verificando Sensores...');
+    setConnectionStatus('Iniciando sensores...');
     setLoading(true);
     setDataCount(0);
+    
+    // Ejecutar script automáticamente cuando se selecciona una persona
+    if (person && person.id) {
+      await executeScriptForPerson(person);
+    }
   };
 
   const getPostureColor = (postura) => {
@@ -299,6 +338,52 @@ const GeronimoMonitor = () => {
             </Button>
           </Col>
         </Row>
+
+        {/* Configuración de Intervalo */}
+        {selectedPerson && (
+          <Row className="mb-3">
+            <Col md={6}>
+              <div className="d-flex align-items-center gap-3">
+                <strong>⏱️ Intervalo de datos:</strong>
+                <Form.Select 
+                  size="sm" 
+                  style={{width: '200px'}}
+                  value={firebaseInterval}
+                  onChange={(e) => setFirebaseInterval(parseFloat(e.target.value))}
+                >
+                  <option value={0.1}>⚡ 0.1s (100ms) - Ultra rápido</option>
+                  <option value={0.5}>🔥 0.5s (500ms) - Muy rápido</option>
+                  <option value={1.0}>💨 1.0s - Rápido</option>
+                  <option value={3.0}>📊 3.0s - Normal (recomendado)</option>
+                  <option value={5.0}>🐢 5.0s - Lento</option>
+                  <option value={10.0}>💾 10.0s - Ahorro de datos</option>
+                </Form.Select>
+                <Badge bg="secondary" className="ms-2">
+                  {firebaseInterval < 1 ? `${firebaseInterval * 1000}ms` : `${firebaseInterval}s`}
+                </Badge>
+              </div>
+            </Col>
+          </Row>
+        )}
+
+        {/* Estado del Script */}
+        {(scriptExecuting || scriptStatus) && (
+          <Row className="mb-3">
+            <Col>
+              <Alert variant={scriptExecuting ? "info" : scriptStatus?.includes('✅') ? "success" : "warning"}>
+                <div className="d-flex align-items-center">
+                  {scriptExecuting && (
+                    <div className="spinner-border spinner-border-sm me-2" role="status">
+                      <span className="visually-hidden">Ejecutando...</span>
+                    </div>
+                  )}
+                  <strong>🚀 Ejecución Automática:</strong>
+                  <span className="ms-2">{scriptStatus || 'Preparando script...'}</span>
+                </div>
+              </Alert>
+            </Col>
+          </Row>
+        )}
         
         {/* Estado de conexión */}
         <Row className="mb-3">
@@ -531,7 +616,7 @@ const GeronimoMonitor = () => {
                 <h6 className="mb-0">🦶 Sensor del Pie</h6>
               </Card.Header>
               <Card.Body>
-                {sensorData?.pie || sensorData?.sensor_type === 'combined' ? (
+                {(sensorData?.pie && sensorData?.pie?.accelerometer) || (sensorData?.sensor_type === 'combined' && sensorData?.pie) ? (
                   <>
                     <h6 className="text-primary mb-3">🚀 Acelerómetro</h6>
                     <Row>
@@ -677,18 +762,17 @@ const GeronimoMonitor = () => {
             </Col>
           </Row>
         )}
-                  <Row>
                     <Col md={4}>
                       <div className="text-center p-2 border rounded">
                         <h5 className="text-danger mb-0">
-                          {formatAccelValue(sensorData.pie.acc?.x)}
+                          {formatAccelValue(sensorData?.pie?.acc?.x)}
                         </h5>
                         <small className="text-muted">X (g)</small>
                         <div className="progress mt-1" style={{ height: '6px' }}>
                           <div 
                             className="progress-bar bg-danger" 
                             style={{ 
-                              width: `${Math.abs(sensorData.pie.acc?.x || 0) * 50}%` 
+                              width: `${Math.abs(sensorData?.pie?.acc?.x || 0) * 50}%` 
                             }}
                           ></div>
                         </div>
@@ -697,26 +781,33 @@ const GeronimoMonitor = () => {
                     <Col md={4}>
                       <div className="text-center p-2 border rounded">
                         <h5 className="text-warning mb-0">
-                          {formatAccelValue(sensorData.pie.acc?.y)}
+                          {formatAccelValue(sensorData?.pie?.acc?.y)}
                         </h5>
                         <small className="text-muted">Y (g)</small>
                         <div className="progress mt-1" style={{ height: '6px' }}>
                           <div 
                             className="progress-bar bg-warning" 
                             style={{ 
-                              width: `${Math.abs(sensorData.pie.acc?.y || 0) * 50}%` 
+                              width: `${Math.abs(sensorData?.pie?.acc?.y || 0) * 50}%` 
                             }}
                           ></div>
                         </div>
                       </div>
                     </Col>
-                    <Col md={4}>
-                      <div className="text-center p-2 border rounded">
-                        <h5 className="text-success mb-0">
-                          {formatAccelValue(sensorData.pie.acc?.z)}
-                        </h5>
-                        <small className="text-muted">Z (g)</small>
-                        <div className="progress mt-1" style={{ height: '6px' }}>
+        {/* Estado del Script */}
+        {(scriptExecuting || scriptStatus) && (
+          <Row className="mb-3">
+            <Col>
+              <Alert variant={scriptStatus?.includes('✅') ? 'success' : scriptStatus?.includes('❌') ? 'danger' : 'info'}>
+                <div className="d-flex align-items-center">
+                  {scriptExecuting && <div className="spinner-border spinner-border-sm me-2"></div>}
+                  <span>{scriptStatus || 'Procesando...'}</span>
+                </div>
+              </Alert>
+            </Col>
+          </Row>
+        )}
+
       </MainCard>
     </Container>
   );

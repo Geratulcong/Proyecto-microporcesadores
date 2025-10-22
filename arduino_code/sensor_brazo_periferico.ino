@@ -16,9 +16,11 @@
 const char* serviceUUID = "12345678-1234-1234-1234-123456789abc";
 const char* characteristicUUID = "12654321-1321-1321-1321-1ba987654321";
 
-// Servicio y característica BLE
+// Servicio y características BLE
 BLEService sensorService(serviceUUID);
 BLEStringCharacteristic sensorCharacteristic(characteristicUUID, BLERead | BLENotify, 512);
+// Característica para recibir comandos de configuración
+BLEStringCharacteristic configCharacteristic("12654321-1321-1321-1321-1ba987654322", BLEWrite, 64);
 
 // Variables del sensor
 float accel_x, accel_y, accel_z;
@@ -26,7 +28,16 @@ float gyro_x, gyro_y, gyro_z;
 
 // Control de tiempo
 unsigned long lastReading = 0;
-const unsigned long readingInterval = 1000; // Enviar datos cada 1 segundo
+
+// ⚡ CONFIGURACIÓN DE VELOCIDAD - Configurable dinámicamente via BLE
+unsigned long readingInterval = 1000;  // Valor inicial: 1 segundo
+
+// Valores predefinidos disponibles
+const unsigned long ULTRA_FAST = 100;   // 0.1s - Ultra rápido (10 Hz)
+const unsigned long VERY_FAST = 500;    // 0.5s - Muy rápido (2 Hz)  
+const unsigned long FAST = 1000;        // 1.0s - Rápido (1 Hz)
+const unsigned long NORMAL = 3000;      // 3.0s - Normal (0.33 Hz)
+const unsigned long SLOW = 5000;        // 5.0s - Lento (0.2 Hz)
 
 // ID único del dispositivo
 String deviceID = "arduino_brazo_001";
@@ -82,10 +93,12 @@ void setup() {
   // Configurar servicio BLE
   BLE.setAdvertisedService(sensorService);
   sensorService.addCharacteristic(sensorCharacteristic);
+  sensorService.addCharacteristic(configCharacteristic);  // Agregar característica de configuración
   BLE.addService(sensorService);
   
-  // Inicializar characteristic
+  // Inicializar characteristics
   sensorCharacteristic.writeValue("Arduino BRAZO listo");
+  configCharacteristic.writeValue("config_ready");
   
   // Comenzar advertising
   BLE.advertise();
@@ -118,6 +131,11 @@ void loop() {
     while (central.connected()) {
       unsigned long currentTime = millis();
       
+      // Verificar si hay comandos de configuración
+      if (configCharacteristic.written()) {
+        handleConfigCommand();
+      }
+      
       // Enviar datos según el intervalo configurado
       if (currentTime - lastReading >= readingInterval) {
         readAndSendSensorData();
@@ -140,6 +158,63 @@ void loop() {
   }
   
   delay(100);
+}
+
+// Función para manejar comandos de configuración via BLE
+void handleConfigCommand() {
+  String command = configCharacteristic.value();
+  Serial.print("📡 Comando recibido: ");
+  Serial.println(command);
+  
+  // Procesar comando de intervalo: "interval:100" para 100ms
+  if (command.startsWith("interval:")) {
+    int newInterval = command.substring(9).toInt();
+    
+    // Validar rango (50ms mínimo, 10s máximo)
+    if (newInterval >= 50 && newInterval <= 10000) {
+      readingInterval = newInterval;
+      Serial.print("⏱️ Intervalo actualizado a: ");
+      Serial.print(readingInterval);
+      Serial.println("ms");
+      
+      // Confirmar cambio
+      String response = "interval_set:" + String(readingInterval);
+      configCharacteristic.writeValue(response);
+    } else {
+      Serial.println("❌ Intervalo inválido (rango: 50-10000ms)");
+      configCharacteristic.writeValue("error:invalid_interval");
+    }
+  }
+  // Procesar comandos predefinidos
+  else if (command == "ultra_fast") {
+    readingInterval = ULTRA_FAST;
+    Serial.println("⚡ Modo Ultra Rápido: 100ms");
+    configCharacteristic.writeValue("mode:ultra_fast");
+  }
+  else if (command == "very_fast") {
+    readingInterval = VERY_FAST;
+    Serial.println("🔥 Modo Muy Rápido: 500ms");
+    configCharacteristic.writeValue("mode:very_fast");
+  }
+  else if (command == "fast") {
+    readingInterval = FAST;
+    Serial.println("💨 Modo Rápido: 1000ms");
+    configCharacteristic.writeValue("mode:fast");
+  }
+  else if (command == "normal") {
+    readingInterval = NORMAL;
+    Serial.println("📊 Modo Normal: 3000ms");
+    configCharacteristic.writeValue("mode:normal");
+  }
+  else if (command == "slow") {
+    readingInterval = SLOW;
+    Serial.println("🐢 Modo Lento: 5000ms");
+    configCharacteristic.writeValue("mode:slow");
+  }
+  else {
+    Serial.println("❓ Comando desconocido");
+    configCharacteristic.writeValue("error:unknown_command");
+  }
 }
 
 void readAndSendSensorData() {

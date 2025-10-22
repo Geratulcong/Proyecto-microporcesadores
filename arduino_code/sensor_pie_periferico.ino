@@ -26,7 +26,22 @@ float gyro_x, gyro_y, gyro_z;
 
 // Control de tiempo
 unsigned long lastReading = 0;
-const unsigned long readingInterval = 1000; // Enviar datos cada 1 segundo
+
+// ⚡ CONFIGURACIÓN DE VELOCIDAD - Selecciona el intervalo que necesites:
+
+// DESCOMENTA UNA de estas líneas según la velocidad que necesites:
+unsigned long readingInterval = 100;   // ⚡ ULTRA RÁPIDO: 0.1s (10 lecturas/segundo)
+// unsigned long readingInterval = 500;   // 🔥 MUY RÁPIDO: 0.5s (2 lecturas/segundo)
+// unsigned long readingInterval = 1000;  // 💨 RÁPIDO: 1.0s (1 lectura/segundo)
+// unsigned long readingInterval = 3000;  // 📊 NORMAL: 3.0s (1 lectura cada 3 segundos)
+// unsigned long readingInterval = 5000;  // 🐢 LENTO: 5.0s (1 lectura cada 5 segundos)
+
+// Valores predefinidos (para referencia)
+const unsigned long ULTRA_FAST = 100;   // 0.1s - Ultra rápido (10 Hz)
+const unsigned long VERY_FAST = 500;    // 0.5s - Muy rápido (2 Hz)  
+const unsigned long FAST = 1000;        // 1.0s - Rápido (1 Hz)
+const unsigned long NORMAL = 3000;      // 3.0s - Normal (0.33 Hz)
+const unsigned long SLOW = 5000;        // 5.0s - Lento (0.2 Hz)
 
 // ID único del dispositivo
 String deviceID = "arduino_pie_001";

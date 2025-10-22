@@ -8,6 +8,7 @@ import DashboardLayout from 'layout/Dashboard';
 const DefaultPages = Loadable(lazy(() => import('views/navigation/dashboard/Default')));
 const GeronimoMonitorPage = Loadable(lazy(() => import('views/monitor/GeronimoMonitorPage')));
 const PersonPage = Loadable(lazy(() => import('views/person/PersonPage')));
+const ScriptExecutorPage = Loadable(lazy(() => import('views/scripts/ScriptExecutorPage')));
 
 // ==============================|| NAVIGATION ROUTING ||============================== //
 
@@ -29,6 +30,10 @@ const NavigationRoutes = {
         {
           path: '/monitor-geronimo',
           element: <GeronimoMonitorPage />
+        },
+        {
+          path: '/script-executor',
+          element: <ScriptExecutorPage />
         }
       ]
     }

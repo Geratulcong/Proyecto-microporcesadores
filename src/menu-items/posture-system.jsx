@@ -2,7 +2,8 @@
 const icons = { 
   person: <i className="ph ph-user" />,
   monitor: <i className="ph ph-activity" />,
-  sensors: <i className="ph ph-pulse" />
+  sensors: <i className="ph ph-pulse" />,
+  script: <i className="ph ph-terminal-window" />
 };
 
 const postureSystem = {
@@ -24,6 +25,13 @@ const postureSystem = {
       type: 'item',
       icon: icons.monitor,
       url: '/monitor-geronimo'
+    },
+    {
+      id: 'script-executor',
+      title: 'Ejecutar Scripts',
+      type: 'item',
+      icon: icons.script,
+      url: '/script-executor'
     }
   ]
 };
